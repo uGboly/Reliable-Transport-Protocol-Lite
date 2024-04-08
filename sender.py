@@ -43,6 +43,15 @@ def send_segment(socket, address, segment, control_block):
     
     log_event(action, segment.segment_type, segment.seqno, num_bytes, control_block)
 
+def receive_segment(socket):
+    response, _ = socket.recvfrom(1024)
+    segment = STPSegment.unpack(response)
+
+    action = "rcv"
+    num_bytes = len(segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
+    log_event(action, segment.segment_type, segment.seqno, num_bytes, control_block)
+    return segment
+
 def establish_connection(sender_socket, receiver_address, control_block):
     # 创建并发送SYN段
     syn_segment = STPSegment(SEGMENT_TYPE_SYN, control_block.isn)
@@ -55,8 +64,8 @@ def establish_connection(sender_socket, receiver_address, control_block):
     try:
         # 等待接收ACK
         while True:
-            response, _ = sender_socket.recvfrom(1024)
-            ack_segment = STPSegment.unpack(response)
+            ack_segment = receive_segment(sender_socket)
+            
             if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
                 control_block.ackno = ack_segment.seqno
                 control_block.state = "ESTABLISHED"
@@ -67,12 +76,11 @@ def establish_connection(sender_socket, receiver_address, control_block):
 
 def ack_receiver(control_block, sender_socket, sender_address):
     while True:
-        if control_block.state == "CLOSED":
+        if control_block.state == "FIN_WAIT":
             break
         # 接收ACK
         try:
-            response, _ = sender_socket.recvfrom(1024)
-            ack_segment = STPSegment.unpack(response)
+            ack_segment = receive_segment(sender_socket)
 
             if ack_segment.segment_type != SEGMENT_TYPE_ACK:
                 continue  # 忽略非ACK段
@@ -119,7 +127,7 @@ def ack_receiver(control_block, sender_socket, sender_address):
 def timer_thread(control_block, sender_socket, sender_address):
     while True:
         with control_block.lock:
-            if control_block.state == "CLOSED":
+            if control_block.state == "FIN_WAIT":
                 break
             if control_block.timer is not None:
                 current_time = time.time() * 1000  # 当前时间，单位为毫秒
@@ -168,7 +176,7 @@ def send_file(sender_port, receiver_port, filename, control_block, sender_socket
 def close_connection(sender_socket, receiver_address, control_block):
     # 创建并发送FIN段
     fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
-    sender_socket.sendto(fin_segment.pack(), receiver_address)
+    send_segment(sender_socket, receiver_address, fin_segment, control_block)
 
     # 更新控制块状态
     control_block.state = "FIN_WAIT"
@@ -179,8 +187,7 @@ def close_connection(sender_socket, receiver_address, control_block):
     try:
         # 等待接收ACK for FIN
         while True:
-            response, _ = sender_socket.recvfrom(1024)
-            ack_segment = STPSegment.unpack(response)
+            ack_segment = receive_segment(sender_socket)
             if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.seqno + 1:
                 control_block.state = "CLOSED"
                 sys.exit(1)
