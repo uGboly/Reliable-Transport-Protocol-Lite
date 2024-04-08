@@ -1,5 +1,6 @@
 import socket
 import sys
+import threading
 from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 
 class STPReceiver:
@@ -62,6 +63,24 @@ class STPReceiver:
         # 发送ACK for FIN
         ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno + 1)
         self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+
+        # 定义处理FIN重传的线程函数
+        def handle_fin_retransmissions():
+            self.receiver_socket.settimeout(2)  # 设置超时时间为2秒
+            try:
+                while True:
+                    packet, _ = self.receiver_socket.recvfrom(1024)
+                    segment = STPSegment.unpack(packet)
+                    if segment.segment_type == SEGMENT_TYPE_FIN:
+                        # 对于重传的FIN，再次发送ACK
+                        self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+            except socket.timeout:
+                # 超时意味着没有收到更多的FIN重传，线程结束
+                pass
+
+        # 启动处理FIN重传的线程
+        fin_thread = threading.Thread(target=handle_fin_retransmissions)
+        fin_thread.start()
 
 if __name__ == '__main__':
     if len(sys.argv) != 5:
