@@ -15,7 +15,6 @@ class STPReceiver:
     def start(self):
         self.handle_syn()
         self.receive_data()
-        self.handle_fin()
 
     def handle_syn(self):
         # 等待并处理SYN
