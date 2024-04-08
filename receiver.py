@@ -1,12 +1,7 @@
 import socket
 from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
+import time
 import sys
-
-# Segment 类型定义
-SEGMENT_TYPE_DATA = 0
-SEGMENT_TYPE_ACK = 1
-SEGMENT_TYPE_SYN = 2
-SEGMENT_TYPE_FIN = 3
 
 # MSS 定义
 MSS = 1000
@@ -40,8 +35,7 @@ def receive_file(receiver_port, sender_port, txt_file_received):
                     ack_segment = STPSegment(SEGMENT_TYPE_ACK, segment.seqno + 1)
                     receiver_socket.sendto(ack_segment.pack(), ('localhost', sender_port))
                     state = "TIME_WAIT"
-                    # 等待2秒以处理可能的重传 FIN
-                    socket.sleep(2)
+                    time.sleep(2)
                     break  # 结束循环，关闭文件和socket
 
     receiver_socket.close()
