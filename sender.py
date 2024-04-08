@@ -76,8 +76,6 @@ def establish_connection(sender_socket, receiver_address, control_block):
 
 def ack_receiver(control_block, sender_socket, sender_address):
     while True:
-        if control_block.state == "FIN_WAIT":
-            break
         # 接收ACK
         try:
             ack_segment = receive_segment(sender_socket)
@@ -86,8 +84,11 @@ def ack_receiver(control_block, sender_socket, sender_address):
                 continue  # 忽略非ACK段
 
             with control_block.lock:
+                if control_block.state == "FIN_WAIT" and ack_segment.seqno == control_block.seqno + 1:
+                    control_block.state = "CLOSE"
+                    break
                 # 检查ACK是否为新的
-                if ack_segment.seqno > control_block.ackno:
+                elif ack_segment.seqno > control_block.ackno:
                     # 更新确认号
                     control_block.ackno = ack_segment.seqno
 
@@ -127,7 +128,7 @@ def ack_receiver(control_block, sender_socket, sender_address):
 def timer_thread(control_block, sender_socket, sender_address):
     while True:
         with control_block.lock:
-            if control_block.state == "FIN_WAIT":
+            if control_block.state == "CLOSE":
                 break
             if control_block.timer is not None:
                 current_time = time.time() * 1000  # 当前时间，单位为毫秒
@@ -171,28 +172,18 @@ def send_file(sender_port, receiver_port, filename, control_block, sender_socket
 
                 sent_length += segment_size
 
-            # time.sleep(0.01)  # 防止过快填充网络
 
 def close_connection(sender_socket, receiver_address, control_block):
-    # 创建并发送FIN段
-    fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
-    send_segment(sender_socket, receiver_address, fin_segment, control_block)
+    while True:
+        with control_block.lock:
+            if not control_block.unack_segments:
+                # 创建并发送FIN段
+                fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
+                send_segment(sender_socket, receiver_address, fin_segment, control_block)
+                # control_block.unack_segments.append(fin_segment)
+                control_block.state = "FIN_WAIT"
+                break    
 
-    # 更新控制块状态
-    control_block.state = "FIN_WAIT"
-
-    # 设置接收ACK的超时
-    sender_socket.settimeout(5.0)
-
-    try:
-        # 等待接收ACK for FIN
-        while True:
-            ack_segment = receive_segment(sender_socket)
-            if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.seqno + 1:
-                control_block.state = "CLOSED"
-                sys.exit(1)
-    except socket.timeout:
-        sys.exit(1)
 
 if __name__ == '__main__':
     if len(sys.argv) != 6:
