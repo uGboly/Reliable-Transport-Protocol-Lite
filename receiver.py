@@ -16,7 +16,7 @@ class STPReceiver:
         self.original_data_received = 0
         self.original_segments_received = 0
         self.dup_data_segments_received = 0
-        self.dup_ack_segments_sent = 0
+        self.total_ack_segments_sent = 0
 
     def start(self):
         self.handle_syn()
@@ -44,6 +44,8 @@ class STPReceiver:
                 self.expected_seqno = segment.seqno + 1
                 ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
                 self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                self.total_ack_segments_sent += 1
+                self.log_event("snd", ack_segment, 0)
                 break
 
     def receive_data(self):
@@ -57,6 +59,8 @@ class STPReceiver:
                 if segment.segment_type == SEGMENT_TYPE_DATA:
                     # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
                     if segment.seqno == self.expected_seqno:
+                        self.original_data_received += len(segment.data)
+                        self.original_segments_received += 1
                         file.write(segment.data)
                         self.expected_seqno += len(segment.data)
 
@@ -65,13 +69,21 @@ class STPReceiver:
                             data = buffer.pop(self.expected_seqno)
                             file.write(data)
                             self.expected_seqno += len(data)
-                    else:
-                        # 如果数据段未按序到达，存入缓冲区
-                        buffer[segment.seqno] = segment.data
+                    elif segment.seqno > self.expected_seqno:  #到达了乱序数据
+                        if segment.seqno in buffer:
+                            self.dup_data_segments_received += 1
+                        else:
+                            self.original_data_received += len(segment.data)
+                            self.original_segments_received += 1
+                            buffer[segment.seqno] = segment.data
+                    else: #到达的数据段已经写入文件
+                        self.dup_data_segments_received += 1
 
                     # 发送ACK
+                    self.total_ack_segments_sent += 1
                     ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
                     self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                    self.log_event("snd", ack_segment, 0) 
 
                 if segment.segment_type == SEGMENT_TYPE_FIN:
                     self.handle_fin(sender_address)
@@ -82,6 +94,7 @@ class STPReceiver:
         # 发送ACK for FIN
         ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno + 1)
         self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+        self.total_ack_segments_sent += 1
         self.log_event("snd", ack_segment, 0)
 
         # 定义处理FIN重传的线程函数
@@ -101,13 +114,16 @@ class STPReceiver:
         # 启动处理FIN重传的线程
         fin_thread = threading.Thread(target=handle_fin_retransmissions)
         fin_thread.start()
+        fin_thread.join()
+        self.finalize_log()
+
 
     def finalize_log(self):
         with open("receiver_log.txt", "a") as log_file:
             log_file.write(f"Original data received: {self.original_data_received}\n")
             log_file.write(f"Original segments received: {self.original_segments_received}\n")
             log_file.write(f"Dup data segments received: {self.dup_data_segments_received}\n")
-            log_file.write(f"Dup ack segments sent: {self.dup_ack_segments_sent}\n")
+            log_file.write(f"Dup ack segments sent: {self.total_ack_segments_sent - self.original_segments_received - 2}\n")
 
 if __name__ == '__main__':
     if len(sys.argv) != 5:
