@@ -62,17 +62,18 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
                 control_block.original_data_sent += num_bytes
                 control_block.original_segments_sent += 1
         
-        
 
-
-def receive_segment(socket):
+def receive_segment(socket, control_block):
     response, _ = socket.recvfrom(1024)
     segment = STPSegment.unpack(response)
 
-    action = "rcv"
-    num_bytes = len(segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
-    log_event(action, segment.segment_type, segment.seqno, num_bytes, control_block)
-    return segment
+    if random.random() < rlp:
+        control_block.ack_segments_dropped += 1
+        log_event("drp", segment.segment_type, segment.seqno, 0, control_block)
+        return
+    else:
+        log_event("rcv", segment.segment_type, segment.seqno, 0, control_block)
+        return segment
 
 def establish_connection(sender_socket, receiver_address, control_block):
     # 创建并发送SYN段
@@ -83,10 +84,10 @@ def establish_connection(sender_socket, receiver_address, control_block):
     # 设置接收ACK的超时
     sender_socket.settimeout(2.0)
 
-        # 等待接收ACK
+    # 等待接收ACK
     while True:
         try:
-            ack_segment = receive_segment(sender_socket)
+            ack_segment = receive_segment(sender_socket, control_block)
             
             if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
                 control_block.ackno = ack_segment.seqno
@@ -94,13 +95,15 @@ def establish_connection(sender_socket, receiver_address, control_block):
                 break
         except socket.timeout:
             send_segment(sender_socket, receiver_address, syn_segment, control_block)
+        except AttributeError:
+            continue
 
 
 def ack_receiver(control_block, sender_socket, sender_address):
     while True:
         # 接收ACK
         try:
-            ack_segment = receive_segment(sender_socket)
+            ack_segment = receive_segment(sender_socket, control_block)
 
             if ack_segment.segment_type != SEGMENT_TYPE_ACK:
                 continue  # 忽略非ACK段
@@ -116,6 +119,9 @@ def ack_receiver(control_block, sender_socket, sender_address):
                     # 更新确认号
                     control_block.ackno = ack_segment.seqno
 
+                    for seg in control_block.unack_segments:
+                        if seg.seqno < ack_segment.seqno:
+                            control_block.original_data_acked += len(seg.data)
                     # 移除所有已确认的段
                     control_block.unack_segments = [seg for seg in control_block.unack_segments if seg.seqno >= ack_segment.seqno]
 
@@ -130,6 +136,7 @@ def ack_receiver(control_block, sender_socket, sender_address):
 
                 else:
                     # 处理重复ACK
+                    control_block.dup_acks_received += 1
                     if ack_segment.seqno in control_block.dup_ack_count:
                         control_block.dup_ack_count[ack_segment.seqno] += 1
                     else:
@@ -147,6 +154,8 @@ def ack_receiver(control_block, sender_socket, sender_address):
 
         except socket.timeout:
             # 如果socket阻塞超时，继续监听
+            continue
+        except AttributeError:
             continue
 
 def timer_thread(control_block, sender_socket, sender_address):
