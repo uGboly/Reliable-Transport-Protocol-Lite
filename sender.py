@@ -46,9 +46,10 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
 
     if random.random() < flp:
         if segment.segment_type == SEGMENT_TYPE_DATA:
-            control_block.original_data_sent += num_bytes
-            control_block.original_segments_sent += 1
             control_block.data_segments_dropped += 1
+            if not is_retransmitted:
+                control_block.original_data_sent += num_bytes
+                control_block.original_segments_sent += 1
 
 
         log_event("drp", segment.segment_type, segment.seqno, num_bytes, control_block)

@@ -99,6 +99,7 @@ class STPReceiver:
                         self.log_event("snd", ack_segment, 0) 
 
                     if segment.segment_type == SEGMENT_TYPE_FIN:
+                        self.log_event("rcv", segment, 0)
                         self.handle_fin(sender_address)
                         break
                 except socket.timeout:
@@ -118,9 +119,12 @@ class STPReceiver:
                 while True:
                     packet, _ = self.receiver_socket.recvfrom(1024)
                     segment = STPSegment.unpack(packet)
+
                     if segment.segment_type == SEGMENT_TYPE_FIN:
                         # 对于重传的FIN，再次发送ACK
+                        self.log_event("rcv", segment, 0)
                         self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                        self.log_event("snd", ack_segment, 0)
             except socket.timeout:
                 # 超时意味着没有收到更多的FIN重传，线程结束
                 pass
