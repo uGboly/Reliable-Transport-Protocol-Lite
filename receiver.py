@@ -17,6 +17,7 @@ class STPReceiver:
         self.original_segments_received = 0
         self.dup_data_segments_received = 0
         self.total_ack_segments_sent = 0
+        self.receiver_socket.settimeout(2.0)
 
     def start(self):
         self.handle_syn()
@@ -37,57 +38,71 @@ class STPReceiver:
     def handle_syn(self):
         # 等待并处理SYN
         while True:
-            packet, sender_address = self.receiver_socket.recvfrom(1024)
-            segment = STPSegment.unpack(packet)
-            if segment.segment_type == SEGMENT_TYPE_SYN:
-                self.log_event("rcv", segment, 0)
-                self.expected_seqno = segment.seqno + 1
-                ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
-                self.receiver_socket.sendto(ack_segment.pack(), sender_address)
-                self.total_ack_segments_sent += 1
-                self.log_event("snd", ack_segment, 0)
-                break
+            try:
+                packet, sender_address = self.receiver_socket.recvfrom(1024)
+                segment = STPSegment.unpack(packet)
+                if segment.segment_type == SEGMENT_TYPE_SYN:
+                    self.log_event("rcv", segment, 0)
+                    self.expected_seqno = segment.seqno + 1
+                    ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
+                    self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                    self.total_ack_segments_sent += 1
+                    self.log_event("snd", ack_segment, 0)
+                    break
+            except socket.timeout:
+                continue
 
     def receive_data(self):
         buffer = {}  # 使用字典作为缓冲区，键为序列号，值为数据
         with open(self.file_to_save, 'wb') as file:
             while True:
-                packet, sender_address = self.receiver_socket.recvfrom(1024)
-                segment = STPSegment.unpack(packet)
-                self.log_event("rcv", segment, len(segment.data)) 
-                
-                if segment.segment_type == SEGMENT_TYPE_DATA:
-                    # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
-                    if segment.seqno == self.expected_seqno:
-                        self.original_data_received += len(segment.data)
-                        self.original_segments_received += 1
-                        file.write(segment.data)
-                        self.expected_seqno += len(segment.data)
+                try:
+                    packet, sender_address = self.receiver_socket.recvfrom(1024)
+                    segment = STPSegment.unpack(packet)
 
-                        # 检查并写入缓冲区中按序的数据
-                        while self.expected_seqno in buffer:
-                            data = buffer.pop(self.expected_seqno)
-                            file.write(data)
-                            self.expected_seqno += len(data)
-                    elif segment.seqno > self.expected_seqno:  #到达了乱序数据
-                        if segment.seqno in buffer:
-                            self.dup_data_segments_received += 1
-                        else:
+                    if segment.segment_type == SEGMENT_TYPE_SYN:
+                        self.log_event("rcv", segment, 0)
+                        ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
+                        self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                        self.total_ack_segments_sent += 1
+                        self.log_event("snd", ack_segment, 0)
+
+                    
+                    if segment.segment_type == SEGMENT_TYPE_DATA:
+                        self.log_event("rcv", segment, len(segment.data))
+                        # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
+                        if segment.seqno == self.expected_seqno:
                             self.original_data_received += len(segment.data)
                             self.original_segments_received += 1
-                            buffer[segment.seqno] = segment.data
-                    else: #到达的数据段已经写入文件
-                        self.dup_data_segments_received += 1
+                            file.write(segment.data)
+                            self.expected_seqno += len(segment.data)
 
-                    # 发送ACK
-                    self.total_ack_segments_sent += 1
-                    ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
-                    self.receiver_socket.sendto(ack_segment.pack(), sender_address)
-                    self.log_event("snd", ack_segment, 0) 
+                            # 检查并写入缓冲区中按序的数据
+                            while self.expected_seqno in buffer:
+                                data = buffer.pop(self.expected_seqno)
+                                file.write(data)
+                                self.expected_seqno += len(data)
+                        elif segment.seqno > self.expected_seqno:  #到达了乱序数据
+                            if segment.seqno in buffer:
+                                self.dup_data_segments_received += 1
+                            else:
+                                self.original_data_received += len(segment.data)
+                                self.original_segments_received += 1
+                                buffer[segment.seqno] = segment.data
+                        else: #到达的数据段已经写入文件
+                            self.dup_data_segments_received += 1
 
-                if segment.segment_type == SEGMENT_TYPE_FIN:
-                    self.handle_fin(sender_address)
-                    break
+                        # 发送ACK
+                        self.total_ack_segments_sent += 1
+                        ack_segment = STPSegment(SEGMENT_TYPE_ACK, self.expected_seqno)
+                        self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+                        self.log_event("snd", ack_segment, 0) 
+
+                    if segment.segment_type == SEGMENT_TYPE_FIN:
+                        self.handle_fin(sender_address)
+                        break
+                except socket.timeout:
+                    continue
 
 
     def handle_fin(self, sender_address):
@@ -99,7 +114,6 @@ class STPReceiver:
 
         # 定义处理FIN重传的线程函数
         def handle_fin_retransmissions():
-            self.receiver_socket.settimeout(2)  # 设置超时时间为2秒
             try:
                 while True:
                     packet, _ = self.receiver_socket.recvfrom(1024)

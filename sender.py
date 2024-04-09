@@ -220,6 +220,7 @@ def close_connection(sender_socket, receiver_address, control_block):
                 fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
                 control_block.fin_segment = fin_segment
                 send_segment(sender_socket, receiver_address, fin_segment, control_block)
+                control_block.timer = time.time() * 1000 + control_block.rto #重置计时器以便FIN超时时重传
                 control_block.state = "FIN_WAIT"
                 break    
 
