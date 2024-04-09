@@ -22,6 +22,7 @@ class STPControlBlock:
         self.timer = None
         self.dup_ack_count = {}  # 记录每个段的重复ACK数
         self.start_time = 0
+        self.fin_segment = None
 
 
 def log_event(action, segment_type, seqno, num_bytes, control_block):
@@ -85,6 +86,8 @@ def ack_receiver(control_block, sender_socket, sender_address):
 
             with control_block.lock:
                 if control_block.state == "FIN_WAIT" and ack_segment.seqno == control_block.seqno + 1:
+                    #如果在FIN_WAIT状态，检查到对FIN的ACK，则进入CLOSE状态并退出循环
+                    control_block.fin_segment = None
                     control_block.state = "CLOSE"
                     break
                 # 检查ACK是否为新的
@@ -122,13 +125,14 @@ def ack_receiver(control_block, sender_socket, sender_address):
                                 break
 
         except socket.timeout:
-            # 如果socket阻塞超时，继续监听（根据你的socket设置）
+            # 如果socket阻塞超时，继续监听
             continue
 
 def timer_thread(control_block, sender_socket, sender_address):
     while True:
         with control_block.lock:
             if control_block.state == "CLOSE":
+                #如果在CLOSE状态，退出循环
                 break
             if control_block.timer is not None:
                 current_time = time.time() * 1000  # 当前时间，单位为毫秒
@@ -143,6 +147,11 @@ def timer_thread(control_block, sender_socket, sender_address):
 
                         # 重置dup_ack_count，因为我们已经重传了段
                         control_block.dup_ack_count = {}
+                    elif control_block.state == "FIN_WAIT" and control_block.fin_segment:
+                        #FIN超时，只重传FIN与重置计时器，无需重置dup_ack_count
+                        send_segment(sender_socket, receiver_address, control_block.fin_segment, control_block)
+                        control_block.timer = current_time + control_block.rto
+
 
 
 def send_file(sender_port, receiver_port, filename, control_block, sender_socket):
@@ -176,11 +185,11 @@ def send_file(sender_port, receiver_port, filename, control_block, sender_socket
 def close_connection(sender_socket, receiver_address, control_block):
     while True:
         with control_block.lock:
-            if not control_block.unack_segments:
+            if not control_block.unack_segments: #确保文件已经可靠地到达receiver
                 # 创建并发送FIN段
                 fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
+                control_block.fin_segment = fin_segment
                 send_segment(sender_socket, receiver_address, fin_segment, control_block)
-                # control_block.unack_segments.append(fin_segment)
                 control_block.state = "FIN_WAIT"
                 break    
 
