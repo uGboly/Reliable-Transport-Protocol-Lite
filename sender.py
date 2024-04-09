@@ -23,6 +23,13 @@ class STPControlBlock:
         self.dup_ack_count = {}  # 记录每个段的重复ACK数
         self.start_time = 0
         self.fin_segment = None
+        self.original_data_sent = 0
+        self.original_data_acked = 0
+        self.original_segments_sent = 0
+        self.retransmitted_segments = 0
+        self.dup_acks_received = 0
+        self.data_segments_dropped = 0
+        self.ack_segments_dropped = 0
 
 
 def log_event(action, segment_type, seqno, num_bytes, control_block):
@@ -193,6 +200,15 @@ def close_connection(sender_socket, receiver_address, control_block):
                 control_block.state = "FIN_WAIT"
                 break    
 
+def finalize_log(control_block):
+    with open("sender_log.txt", "a") as log_file:
+        log_file.write(f"Original data sent: {control_block.original_data_sent}\n")
+        log_file.write(f"Original data acked: {control_block.original_data_acked}\n")
+        log_file.write(f"Original segments sent: {control_block.original_segments_sent}\n")
+        log_file.write(f"Retransmitted segments: {control_block.retransmitted_segments}\n")
+        log_file.write(f"Dup acks received: {control_block.dup_acks_received}\n")
+        log_file.write(f"Data segments dropped: {control_block.data_segments_dropped}\n")
+        log_file.write(f"Ack segments dropped: {control_block.ack_segments_dropped}\n")
 
 if __name__ == '__main__':
     if len(sys.argv) != 6:
@@ -233,3 +249,6 @@ if __name__ == '__main__':
     timer_thread.join()
 
     sender_socket.close()
+    
+    with control_block.lock:
+        finalize_log(control_block)
