@@ -1,9 +1,7 @@
 import socket
 import random
 import sys
-import os
 import time
-from threading import Thread, Lock
 import threading
 from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 
@@ -15,7 +13,7 @@ class STPControlBlock:
         self.isn = random.randint(0, 65535)
         self.seqno = self.isn + 1
         self.ackno = 0
-        self.lock = Lock()
+        self.lock = threading.Lock()
         self.window_size = max_win
         self.rto = rto
         self.unack_segments = []  # 存储已发送但未确认的段
@@ -48,7 +46,10 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
 
     if random.random() < flp:
         if segment.segment_type == SEGMENT_TYPE_DATA:
+            control_block.original_data_sent += num_bytes
+            control_block.original_segments_sent += 1
             control_block.data_segments_dropped += 1
+
 
         log_event("drp", segment.segment_type, segment.seqno, num_bytes, control_block)
     else:
@@ -99,7 +100,7 @@ def establish_connection(sender_socket, receiver_address, control_block):
             continue
 
 
-def ack_receiver(control_block, sender_socket, sender_address):
+def ack_receiver(control_block, sender_socket):
     while True:
         # 接收ACK
         try:
@@ -158,7 +159,7 @@ def ack_receiver(control_block, sender_socket, sender_address):
         except AttributeError:
             continue
 
-def timer_thread(control_block, sender_socket, sender_address):
+def timer_thread(control_block, sender_socket):
     while True:
         with control_block.lock:
             if control_block.state == "CLOSE":
@@ -184,7 +185,7 @@ def timer_thread(control_block, sender_socket, sender_address):
 
 
 
-def send_file(sender_port, receiver_port, filename, control_block, sender_socket):
+def send_file(filename, control_block, sender_socket):
     with open(filename, 'rb') as file:
         file_data = file.read()
         total_length = len(file_data)
@@ -263,12 +264,12 @@ if __name__ == '__main__':
         print("Failed to establish connection.")
         sys.exit(1)
 
-    ack_thread = threading.Thread(target=ack_receiver, args=(control_block, sender_socket, sender_address))
-    timer_thread = threading.Thread(target=timer_thread, args=(control_block, sender_socket, sender_address))
+    ack_thread = threading.Thread(target=ack_receiver, args=(control_block, sender_socket))
+    timer_thread = threading.Thread(target=timer_thread, args=(control_block, sender_socket))
     ack_thread.start()
     timer_thread.start()
 
-    send_file(sender_port, receiver_port, txt_file_to_send, control_block, sender_socket)
+    send_file(txt_file_to_send, control_block, sender_socket)
 
     close_connection(sender_socket, receiver_address, control_block)
 
