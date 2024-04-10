@@ -1,6 +1,6 @@
 import struct
 
-# Segment 类型定义
+# Segment type definitions
 SEGMENT_TYPE_DATA = 0
 SEGMENT_TYPE_ACK = 1
 SEGMENT_TYPE_SYN = 2
@@ -13,14 +13,24 @@ class STPSegment:
         self.data = data
 
     def pack(self):
-        # 打包 segment，数据包格式：type(2 bytes) + seqno(2 bytes) + data
+        # Pack the segment. Packet format: type(2 bytes) + seqno(2 bytes) + data
         header = struct.pack('!HH', self.segment_type, self.seqno)
         return header + self.data
 
     @staticmethod
     def unpack(packet):
-        # 解包 segment
+        # Unpack the segment
         header = packet[:4]
         segment_type, seqno = struct.unpack('!HH', header)
         data = packet[4:]
         return STPSegment(segment_type, seqno, data)
+
+    def segment_type_name(self):
+        # Return a string representation of the segment type for logging
+        type_names = {
+            SEGMENT_TYPE_DATA: "DATA",
+            SEGMENT_TYPE_ACK: "ACK",
+            SEGMENT_TYPE_SYN: "SYN",
+            SEGMENT_TYPE_FIN: "FIN"
+        }
+        return type_names.get(self.segment_type, "UNKNOWN")
