@@ -8,7 +8,7 @@ from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_
 MSS = 1000
 
 
-class STPControlBlock:
+class ControlBlock:
     def __init__(self, max_win, rto):
         self.state = "CLOSED"
         self.isn = random.randint(0, 65535)
@@ -131,22 +131,18 @@ def update_send_stats(control_block, num_bytes, is_retransmitted):
 
 
 def receive_segment(socket, control_block):
-    try:
-        # Adjust the buffer size if necessary
-        response, _ = socket.recvfrom(1024)
-        segment = STPSegment.unpack(response)
+    # Adjust the buffer size if necessary
+    response, _ = socket.recvfrom(1024)
+    segment = STPSegment.unpack(response)
 
-        # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
-        if random.random() < rlp:
-            control_block.log_event("drp", segment)  # Log the drop
-            control_block.ack_segments_dropped += 1
-            return
-        else:
-            control_block.log_event("rcv", segment)  # Log the receipt
-            return segment
-    except socket.error as e:
-        print(f"Socket error: {e}")
+    # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
+    if random.random() < rlp:
+        control_block.log_event("drp", segment)  # Log the drop
+        control_block.ack_segments_dropped += 1
         return None
+    else:
+        control_block.log_event("rcv", segment)  # Log the receipt
+        return segment
 
 
 def establish_connection(sender_socket, receiver_address, control_block):
@@ -307,6 +303,7 @@ def close_connection(sender_socket, receiver_address, control_block):
 
         # Create and send the FIN segment
         fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
+        control_block.fin_segment = fin_segment
         send_segment(sender_socket, receiver_address, fin_segment,
                     control_block, is_retransmitted=False)
 
@@ -349,7 +346,7 @@ def main(sender_port, receiver_port, txt_file_to_send, max_win, rto, flp, rlp):
     with open("sender_log.txt", "w") as log_file:
         log_file.write("")
 
-    control_block = STPControlBlock(max_win, rto)
+    control_block = ControlBlock(max_win, rto)
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
     receiver_address = ('localhost', receiver_port)
