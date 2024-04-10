@@ -58,9 +58,15 @@ class STPControlBlock:
 
     def acknowledge_segment(self, ackno):
         self.ackno = ackno
+
+        for seg in self.unack_segments:
+            if seg.seqno < ackno:
+                self.original_data_acked += len(seg.data)
+
         # Remove acknowledged segments
         self.unack_segments = [
             seg for seg in self.unack_segments if seg.seqno >= ackno]
+        
         if not self.unack_segments:
             self.cancel_timer()
 
@@ -68,7 +74,7 @@ class STPControlBlock:
         with self.lock:
             return func(*args, **kwargs)
 
-    def log_event(self, action, segment, is_retransmitted=False):
+    def log_event(self, action, segment):
         current_time = time.time() * 1000
         time_offset = 0 if self.start_time == 0 else current_time - self.start_time
         segment_type_str = segment.segment_type_name()
@@ -78,14 +84,6 @@ class STPControlBlock:
         with open("sender_log.txt", "a") as log_file:
             log_file.write(
                 f"{action} {time_offset:.2f} {segment_type_str} {segment.seqno} {num_bytes}\n")
-
-        # Increment counters based on segment type and action
-        # if action == "snd":
-        #     if not is_retransmitted:
-        #         self.original_segments_sent += 1
-        #         self.original_data_sent += len(segment.data)
-        #     else:
-        #         self.retransmitted_segments += 1
 
     def get_statistics(self):
         return {
@@ -106,13 +104,13 @@ def send_segment(socket, address, segment, control_block, is_retransmitted=False
     # Simulate segment dropping based on flp (failure probability)
     if random.random() < flp:
         # Updated to use the enhanced logging method
-        control_block.log_event("drp", segment, is_retransmitted)
+        control_block.log_event("drp", segment)
         if segment.segment_type == SEGMENT_TYPE_DATA:
             update_drop_stats(control_block, num_bytes, is_retransmitted)
     else:
         socket.sendto(segment.pack(), address)
         # Updated to use the enhanced logging method
-        control_block.log_event("snd", segment, is_retransmitted)
+        control_block.log_event("snd", segment)
         if segment.segment_type == SEGMENT_TYPE_DATA:
             update_send_stats(control_block, num_bytes, is_retransmitted)
 
@@ -142,7 +140,7 @@ def receive_segment(socket, control_block):
         if random.random() < rlp:
             control_block.log_event("drp", segment)  # Log the drop
             control_block.ack_segments_dropped += 1
-            return None  # Indicate the segment was "dropped"
+            return
         else:
             control_block.log_event("rcv", segment)  # Log the receipt
             return segment
@@ -185,10 +183,6 @@ def ack_receiver(control_block, sender_socket, receiver_address):
                 # Receive ACK
                 ack_segment = receive_segment(sender_socket, control_block)
 
-                # Ignore non-ACK segments
-                if ack_segment.segment_type != SEGMENT_TYPE_ACK:
-                    continue
-
                 # Handle ACK reception based on the current state
                 if control_block.is_state("FIN_WAIT") and ack_segment.seqno == control_block.seqno + 1:
                     # If in FIN_WAIT state and the ACK for the FIN is received
@@ -211,6 +205,7 @@ def ack_receiver(control_block, sender_socket, receiver_address):
 
 
 def handle_duplicate_ack(control_block, ack_segment, sender_socket, receiver_address):
+    control_block.dup_acks_received += 1
     if ack_segment.seqno in control_block.dup_ack_count:
         control_block.dup_ack_count[ack_segment.seqno] += 1
     else:
