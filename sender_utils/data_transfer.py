@@ -1,7 +1,8 @@
 from segment import MSS, Segment, SEGMENT_TYPE_DATA
 from sender_utils.utils import send_segment
+from sender_utils.tear_down import tear_down
 
-def file_sender(filename, control_block, sender_socket, receiver_address):
+def data_transfer(filename, control_block, sender_socket, receiver_address):
     try:
         with open(filename, 'rb') as file:
             file_data = file.read()
@@ -33,6 +34,8 @@ def file_sender(filename, control_block, sender_socket, receiver_address):
                         control_block, segment_size, new_segment)
 
                     sent_length += segment_size
+        
+        tear_down(sender_socket, receiver_address, control_block)
     except IOError as e:
         print(f"Error reading file {filename}: {e}")
 

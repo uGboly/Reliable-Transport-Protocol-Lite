@@ -3,39 +3,35 @@ import sys
 import threading
 from sender_utils.control_block import ControlBlock
 from sender_utils.handshake import handshake
-from sender_utils.tear_down import tear_down
 from sender_utils.ack_handler import ack_handler
 from sender_utils.timer_handler import timer_handler
-from sender_utils.file_sender import file_sender
+from sender_utils.data_transfer import data_transfer
 
 
 def main(sender_port, receiver_port, txt_file_to_send, max_win, rto, flp, rlp):
-
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind(('', sender_port))
     control_block = ControlBlock(max_win, rto, flp, rlp)
-    sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sender_socket.bind(('', sender_port))
-    receiver_address = ('localhost', receiver_port)
 
     try:
-        handshake(sender_socket, receiver_address, control_block)
+        handshake(control_block, udp_socket, ('localhost', receiver_port))
 
-        ack_thread = threading.Thread(target=ack_handler, args=(
-            control_block, sender_socket, receiver_address))
-        timer_thread = threading.Thread(target=timer_handler, args=(
-            control_block, sender_socket, receiver_address))
-        ack_thread.start()
-        timer_thread.start()
+        ack_event_thread = threading.Thread(target=ack_handler, args=(
+            control_block, udp_socket, ('localhost', receiver_port)))
+        timer_event_thread = threading.Thread(target=timer_handler, args=(
+            control_block, udp_socket, ('localhost', receiver_port)))
+        
+        ack_event_thread.start()
+        timer_event_thread.start()
 
-        file_sender(txt_file_to_send, control_block,
-                    sender_socket, receiver_address)
+        data_transfer(txt_file_to_send, control_block,
+                    udp_socket, ('localhost', receiver_port))
 
-        tear_down(sender_socket, receiver_address, control_block)
-
-        ack_thread.join()
-        timer_thread.join()
+        ack_event_thread.join()
+        timer_event_thread.join()
 
     finally:
-        sender_socket.close()
+        udp_socket.close()
         control_block.print_statistics()
 
 

@@ -2,7 +2,7 @@ from segment import Segment, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN
 from sender_utils.utils import send_segment, receive_segment, ReceiveError
 
 
-def handshake(sender_socket, receiver_address, control_block):
+def handshake(control_block, sender_socket, receiver_address):
     # Set receive ACK timeout
     sender_socket.settimeout(control_block.rto / 1000.0)
 
