@@ -84,7 +84,7 @@ def establish_connection(sender_socket, receiver_address, control_block):
 
 
     # 设置接收ACK的超时
-    sender_socket.settimeout(2.0)
+    sender_socket.settimeout(control_block.rto / 1000.0)
 
     # 等待接收ACK
     while True:
