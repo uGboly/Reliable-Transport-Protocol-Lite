@@ -1,6 +1,6 @@
-import socket
-from segment import MSS, Segment, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN
-from sender_utils.utils import send_segment, receive_segment
+from segment import Segment, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN
+from sender_utils.utils import send_segment, receive_segment, ReceiveError
+
 
 def handshake(sender_socket, receiver_address, control_block):
     # Set receive ACK timeout
@@ -20,10 +20,6 @@ def handshake(sender_socket, receiver_address, control_block):
                 # Transition to ESTABLISHED state
                 control_block.set_state("ESTABLISHED")
                 break
-        except socket.timeout:
-            # If waiting for ACK times out, resend SYN segment
+        except ReceiveError:
             send_segment(sender_socket, receiver_address,
                          syn_segment, control_block, is_retransmitted=True)
-        except AttributeError:
-            # In case of an unexpected attribute error, possibly due to an unexpected segment format, ignore and continue
-            continue

@@ -1,5 +1,7 @@
 import random
+import socket
 from segment import Segment, SEGMENT_TYPE_DATA
+
 
 def send_segment(socket, address, segment, control_block, is_retransmitted=False):
     num_bytes = len(
@@ -34,16 +36,24 @@ def update_send_stats(control_block, num_bytes, is_retransmitted):
         control_block.original_segments_sent += 1
 
 
-def receive_segment(socket, control_block):
-    # Adjust the buffer size if necessary
-    response, _ = socket.recvfrom(1024)
-    segment = Segment.unpack(response)
+def receive_segment(sender_socket, control_block):
+    try:
+        response, _ = sender_socket.recvfrom(1024)
+        segment = Segment.unpack(response)
 
-    # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
-    if random.random() < control_block.rlp:
-        control_block.log_event("drp", segment)  # Log the drop
-        control_block.ack_segments_dropped += 1
-        return None
-    else:
-        control_block.log_event("rcv", segment)  # Log the receipt
-        return segment
+        # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
+        if random.random() < control_block.rlp:
+            control_block.log_event("drp", segment)  # Log the drop
+            control_block.ack_segments_dropped += 1
+            raise ReceiveError("Segment dropped!")
+        else:
+            control_block.log_event("rcv", segment)  # Log the receipt
+            return segment
+    except socket.timeout:
+        raise ReceiveError(f"Socket timeout")
+
+
+class ReceiveError(Exception):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)

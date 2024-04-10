@@ -3,9 +3,11 @@ import threading
 import random
 from segment import SEGMENT_TYPE_DATA
 
+
 class ControlBlock:
     def __init__(self, max_win, rto, flp, rlp):
         self.state = "CLOSED"
+        random.seed()
         self.isn = random.randint(0, 65535)
         self.seqno = self.isn + 1
         self.ackno = 0
@@ -18,6 +20,7 @@ class ControlBlock:
         self.timer = None
         self.dup_ack_count = {}
         self.start_time = 0
+        self.is_syned = False
         self.fin_segment = None
         # Statistics
         self.original_data_sent = 0
@@ -63,7 +66,7 @@ class ControlBlock:
         # Remove acknowledged segments
         self.unack_segments = [
             seg for seg in self.unack_segments if seg.seqno >= ackno]
-        
+
         if not self.unack_segments:
             self.cancel_timer()
 
@@ -73,7 +76,14 @@ class ControlBlock:
 
     def log_event(self, action, segment):
         current_time = time.time() * 1000
-        time_offset = 0 if self.start_time == 0 else current_time - self.start_time
+
+        if not self.is_syned:
+            with open("sender_log.txt", "w") as log_file:
+                log_file.write("")
+            self.is_syned = True
+            self.start_time = current_time
+
+        time_offset = current_time - self.start_time
         segment_type_str = segment.segment_type_name()
         num_bytes = len(
             segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
