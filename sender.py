@@ -253,6 +253,8 @@ if __name__ == '__main__':
     with open("sender_log.txt", "w") as log_file:
         log_file.write("") 
 
+    random.seed()
+
     control_block = STPControlBlock()
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
