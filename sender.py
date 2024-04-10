@@ -3,81 +3,8 @@ import random
 import sys
 import threading
 from segment import MSS, Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
-from sender_utils.control_block import ControlBlock
-
-def send_segment(socket, address, segment, control_block, is_retransmitted=False):
-    num_bytes = len(
-        segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
-
-    # Simulate segment dropping based on flp (failure probability)
-    if random.random() < flp:
-        # Updated to use the enhanced logging method
-        control_block.log_event("drp", segment)
-        if segment.segment_type == SEGMENT_TYPE_DATA:
-            update_drop_stats(control_block, num_bytes, is_retransmitted)
-    else:
-        socket.sendto(segment.pack(), address)
-        # Updated to use the enhanced logging method
-        control_block.log_event("snd", segment)
-        if segment.segment_type == SEGMENT_TYPE_DATA:
-            update_send_stats(control_block, num_bytes, is_retransmitted)
-
-
-def update_drop_stats(control_block, num_bytes, is_retransmitted):
-    control_block.data_segments_dropped += 1
-    if not is_retransmitted:
-        control_block.original_data_sent += num_bytes
-        control_block.original_segments_sent += 1
-
-
-def update_send_stats(control_block, num_bytes, is_retransmitted):
-    if is_retransmitted:
-        control_block.retransmitted_segments += 1
-    else:
-        control_block.original_data_sent += num_bytes
-        control_block.original_segments_sent += 1
-
-
-def receive_segment(socket, control_block):
-    # Adjust the buffer size if necessary
-    response, _ = socket.recvfrom(1024)
-    segment = Segment.unpack(response)
-
-    # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
-    if random.random() < rlp:
-        control_block.log_event("drp", segment)  # Log the drop
-        control_block.ack_segments_dropped += 1
-        return None
-    else:
-        control_block.log_event("rcv", segment)  # Log the receipt
-        return segment
-
-
-def establish_connection(sender_socket, receiver_address, control_block):
-    # Set receive ACK timeout
-    sender_socket.settimeout(control_block.rto / 1000.0)
-
-    # Create and send SYN segment
-    syn_segment = Segment(SEGMENT_TYPE_SYN, control_block.isn)
-    control_block.set_state("SYN_SENT")  # Transition to SYN_SENT state
-    send_segment(sender_socket, receiver_address, syn_segment, control_block)
-
-    # Wait to receive ACK
-    while True:
-        try:
-            ack_segment = receive_segment(sender_socket, control_block)
-
-            if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
-                # Transition to ESTABLISHED state
-                control_block.set_state("ESTABLISHED")
-                break
-        except socket.timeout:
-            # If waiting for ACK times out, resend SYN segment
-            send_segment(sender_socket, receiver_address,
-                         syn_segment, control_block, is_retransmitted=True)
-        except AttributeError:
-            # In case of an unexpected attribute error, possibly due to an unexpected segment format, ignore and continue
-            continue
+from sender_utils.control_block import ControlBlock, handshake
+from sender_utils.utils import send_segment, receive_segment
 
 
 def ack_receiver(control_block, sender_socket, receiver_address):
@@ -236,13 +163,13 @@ def main(sender_port, receiver_port, txt_file_to_send, max_win, rto, flp, rlp):
     with open("sender_log.txt", "w") as log_file:
         log_file.write("")
 
-    control_block = ControlBlock(max_win, rto)
+    control_block = ControlBlock(max_win, rto, flp, rlp)
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
     receiver_address = ('localhost', receiver_port)
 
     try:
-        establish_connection(sender_socket, receiver_address, control_block)
+        handshake(sender_socket, receiver_address, control_block)
 
         ack_thread = threading.Thread(target=ack_receiver, args=(
             control_block, sender_socket, receiver_address))

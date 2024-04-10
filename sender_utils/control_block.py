@@ -4,7 +4,7 @@ import random
 from segment import SEGMENT_TYPE_DATA
 
 class ControlBlock:
-    def __init__(self, max_win, rto):
+    def __init__(self, max_win, rto, flp, rlp):
         self.state = "CLOSED"
         self.isn = random.randint(0, 65535)
         self.seqno = self.isn + 1
@@ -12,6 +12,8 @@ class ControlBlock:
         self.lock = threading.Lock()
         self.window_size = max_win
         self.rto = rto
+        self.flp = flp
+        self.rlp = rlp
         self.unack_segments = []
         self.timer = None
         self.dup_ack_count = {}
