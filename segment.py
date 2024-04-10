@@ -1,12 +1,12 @@
 import struct
 
-# Segment type definitions
 SEGMENT_TYPE_DATA = 0
 SEGMENT_TYPE_ACK = 1
 SEGMENT_TYPE_SYN = 2
 SEGMENT_TYPE_FIN = 3
+MSS = 1000
 
-class STPSegment:
+class Segment:
     def __init__(self, segment_type, seqno, data=b''):
         self.segment_type = segment_type
         self.seqno = seqno
@@ -23,7 +23,7 @@ class STPSegment:
         header = packet[:4]
         segment_type, seqno = struct.unpack('!HH', header)
         data = packet[4:]
-        return STPSegment(segment_type, seqno, data)
+        return Segment(segment_type, seqno, data)
 
     def segment_type_name(self):
         # Return a string representation of the segment type for logging
