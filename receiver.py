@@ -4,26 +4,26 @@ import threading
 from segment import Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 from receiver_utils.control_block import ControlBlock
 from receiver_utils.log_actions import log_actions
+from receiver_utils.utils import send_segment, receive_segment, ReceiveError
+
 
 def handle_syn(control_block):
     # 等待并处理SYN
     while True:
         try:
-            packet, sender_address = control_block.receiver_socket.recvfrom(
-                1024)
-            segment = Segment.unpack(packet)
+            segment, sender_address = receive_segment(control_block)
             if segment.segment_type == SEGMENT_TYPE_SYN:
                 log_actions(control_block, "rcv", segment, 0)
                 control_block.expected_seqno = segment.seqno + 1
                 ack_segment = Segment(
                     SEGMENT_TYPE_ACK, control_block.expected_seqno)
-                control_block.receiver_socket.sendto(
-                    ack_segment.pack(), sender_address)
+                send_segment(control_block,
+                             ack_segment, sender_address)
                 control_block.total_ack_segments_sent += 1
                 log_actions(control_block, "snd", ack_segment, 0)
                 break
-        except socket.timeout:
-            continue
+        except ReceiveError:
+            pass
 
 
 def receive_data(control_block):
@@ -31,21 +31,20 @@ def receive_data(control_block):
     with open(control_block.file_to_save, 'wb') as file:
         while True:
             try:
-                packet, sender_address = control_block.receiver_socket.recvfrom(
-                    1024)
-                segment = Segment.unpack(packet)
+                segment, sender_address = receive_segment(control_block)
 
                 if segment.segment_type == SEGMENT_TYPE_SYN:
                     log_actions(control_block, "rcv", segment, 0)
                     ack_segment = Segment(
                         SEGMENT_TYPE_ACK, control_block.expected_seqno)
-                    control_block.receiver_socket.sendto(
-                        ack_segment.pack(), sender_address)
+                    send_segment(control_block,
+                                 ack_segment, sender_address)
                     control_block.total_ack_segments_sent += 1
                     log_actions(control_block, "snd", ack_segment, 0)
 
                 if segment.segment_type == SEGMENT_TYPE_DATA:
-                    log_actions(control_block, "rcv", segment, len(segment.data))
+                    log_actions(control_block, "rcv",
+                                segment, len(segment.data))
                     # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
                     if segment.seqno == control_block.expected_seqno:
                         control_block.original_data_received += len(
@@ -74,22 +73,22 @@ def receive_data(control_block):
                     control_block.total_ack_segments_sent += 1
                     ack_segment = Segment(
                         SEGMENT_TYPE_ACK, control_block.expected_seqno)
-                    control_block.receiver_socket.sendto(
-                        ack_segment.pack(), sender_address)
+                    send_segment(control_block,
+                                 ack_segment, sender_address)
                     log_actions(control_block, "snd", ack_segment, 0)
 
                 if segment.segment_type == SEGMENT_TYPE_FIN:
                     log_actions(control_block, "rcv", segment, 0)
                     handle_fin(control_block, sender_address)
                     break
-            except socket.timeout:
+            except ReceiveError:
                 continue
 
 
 def handle_fin(control_block, sender_address):
     # 发送ACK for FIN
     ack_segment = Segment(SEGMENT_TYPE_ACK, control_block.expected_seqno + 1)
-    control_block.receiver_socket.sendto(ack_segment.pack(), sender_address)
+    send_segment(control_block, ack_segment, sender_address)
     control_block.total_ack_segments_sent += 1
     log_actions(control_block, "snd", ack_segment, 0)
 
@@ -97,17 +96,15 @@ def handle_fin(control_block, sender_address):
     def handle_fin_retransmissions():
         try:
             while True:
-                packet, _ = control_block.receiver_socket.recvfrom(1024)
-                segment = Segment.unpack(packet)
+                segment, _ = receive_segment(control_block)
 
                 if segment.segment_type == SEGMENT_TYPE_FIN:
                     # 对于重传的FIN，再次发送ACK
                     log_actions(control_block, "rcv", segment, 0)
-                    control_block.receiver_socket.sendto(
-                        ack_segment.pack(), sender_address)
+                    send_segment(control_block,
+                                 ack_segment, sender_address)
                     log_actions(control_block, "snd", ack_segment, 0)
-        except socket.timeout:
-            # 超时意味着没有收到更多的FIN重传，线程结束
+        except ReceiveError:
             pass
 
     # 启动处理FIN重传的线程
