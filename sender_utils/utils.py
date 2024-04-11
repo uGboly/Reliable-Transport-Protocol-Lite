@@ -10,13 +10,13 @@ def send_segment(socket, address, segment, control_block, is_retransmitted=False
     # Simulate segment dropping based on flp (failure probability)
     if random.random() < control_block.flp:
         # Updated to use the enhanced logging method
-        control_block.log_event("drp", segment)
+        control_block.log_actions("drp", segment)
         if segment.segment_type == SEGMENT_TYPE_DATA:
             update_drop_stats(control_block, num_bytes, is_retransmitted)
     else:
         socket.sendto(segment.pack(), address)
         # Updated to use the enhanced logging method
-        control_block.log_event("snd", segment)
+        control_block.log_actions("snd", segment)
         if segment.segment_type == SEGMENT_TYPE_DATA:
             update_send_stats(control_block, num_bytes, is_retransmitted)
 
@@ -43,11 +43,11 @@ def receive_segment(sender_socket, control_block):
 
         # Simulate ACK segment dropping based on rlp (failure probability for ACK segments)
         if random.random() < control_block.rlp:
-            control_block.log_event("drp", segment)  # Log the drop
+            control_block.log_actions("drp", segment)  # Log the drop
             control_block.ack_segments_dropped += 1
             raise ReceiveError("Segment dropped!")
         else:
-            control_block.log_event("rcv", segment)  # Log the receipt
+            control_block.log_actions("rcv", segment)  # Log the receipt
             return segment
     except socket.timeout:
         raise ReceiveError(f"Socket timeout")

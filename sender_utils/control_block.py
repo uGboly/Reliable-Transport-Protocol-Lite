@@ -74,7 +74,7 @@ class ControlBlock:
         with self.lock:
             return func(*args, **kwargs)
 
-    def log_event(self, action, segment):
+    def log_actions(self, action, segment):
         current_time = time.time() * 1000
 
         if not self.is_syned:
