@@ -1,30 +1,9 @@
-import socket
 import sys
 import threading
 from segment import Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 from receiver_utils.control_block import ControlBlock
-from receiver_utils.log_actions import log_actions
-from receiver_utils.utils import send_segment, receive_segment, ReceiveError
-
-
-def handle_syn(control_block):
-    # 等待并处理SYN
-    while True:
-        try:
-            segment, sender_address = receive_segment(control_block)
-            if segment.segment_type == SEGMENT_TYPE_SYN:
-                log_actions(control_block, "rcv", segment, 0)
-                control_block.expected_seqno = segment.seqno + 1
-                ack_segment = Segment(
-                    SEGMENT_TYPE_ACK, control_block.expected_seqno)
-                send_segment(control_block,
-                             ack_segment, sender_address)
-                control_block.total_ack_segments_sent += 1
-                log_actions(control_block, "snd", ack_segment, 0)
-                break
-        except ReceiveError:
-            pass
-
+from receiver_utils.handshake import handshake
+from receiver_utils.utils import log_actions, send_segment, receive_segment, ReceiveError
 
 def receive_data(control_block):
     buffer = {}  # 使用字典作为缓冲区，键为序列号，值为数据
@@ -139,5 +118,5 @@ if __name__ == '__main__':
 
     control_block = ControlBlock(receiver_port, sender_port,
                                  txt_file_received, max_win)
-    handle_syn(control_block)
+    handshake(control_block)
     receive_data(control_block)

@@ -7,6 +7,7 @@ class ControlBlock:
         self.file_to_save = file_to_save
         self.max_win = max_win
         self.expected_seqno = 0
+        self.start_time = 0
         self.receiver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.receiver_socket.bind(('', receiver_port))
         self.original_data_received = 0
