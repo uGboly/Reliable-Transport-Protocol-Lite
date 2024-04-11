@@ -1,10 +1,7 @@
 import sys
-import threading
-from segment import Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 from receiver_utils.control_block import ControlBlock
 from receiver_utils.handshake import handshake
 from receiver_utils.data_transfer import data_transfer
-from receiver_utils.utils import log_actions, send_segment, receive_segment, ReceiveError
 
 
 if __name__ == '__main__':
