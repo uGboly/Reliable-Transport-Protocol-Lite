@@ -49,7 +49,7 @@ def write_data_and_update_control(control_block, data, file):
     file.write(data)
     control_block.original_data_received += len(data)
     control_block.original_segments_received += 1
-    control_block.expected_seqno += len(data)
+    control_block.expected_seqno = (len(data) + control_block.expected_seqno) % ( 2 ** 16 - 1)
 
 
 def check_and_write_sliding_buffered_data(control_block, file, sliding_window):

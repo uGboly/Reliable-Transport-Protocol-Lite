@@ -16,7 +16,7 @@ def ack_handler(control_block, sender_socket, receiver_address):
                 control_block.acknowledge_segment(ack_segment.seqno)
 
                 # Handle duplicate ACKs
-                if ack_segment.seqno <= control_block.ackno:
+                if ack_segment.seqno < control_block.ackno:
                     handle_duplicate_ack(
                         control_block, ack_segment, sender_socket, receiver_address)
 

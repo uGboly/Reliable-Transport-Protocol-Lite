@@ -48,4 +48,4 @@ def update_control_block_for_sent_segment(control_block, segment_size, segment):
     if not control_block.unack_segments:
         control_block.start_timer()  # Start the timer for the first unacknowledged segment
     control_block.unack_segments.append(segment)
-    control_block.seqno += segment_size
+    control_block.seqno = (control_block.seqno + segment_size) % (2 ** 16 - 1)

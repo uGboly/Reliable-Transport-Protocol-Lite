@@ -64,6 +64,9 @@ class ControlBlock:
                 self.original_data_acked += len(seg.data)
 
         # Remove acknowledged segments
+        if ackno < self.isn:
+            self.unack_segments = [
+                seg for seg in self.unack_segments if seg.seqno < self.isn]
         self.unack_segments = [
             seg for seg in self.unack_segments if seg.seqno >= ackno]
 
