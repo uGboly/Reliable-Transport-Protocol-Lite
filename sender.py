@@ -117,7 +117,7 @@ def ack_receiver(control_block, sender_socket):
                     control_block.state = "CLOSE"
                     break
                 # 检查ACK是否为新的
-                elif ack_segment.seqno > control_block.ackno:
+                elif ack_segment.seqno >= control_block.ackno or ack_segment.seqno < control_block.isn:
                     # 更新确认号
                     control_block.ackno = ack_segment.seqno
 
@@ -125,6 +125,8 @@ def ack_receiver(control_block, sender_socket):
                         if seg.seqno < ack_segment.seqno:
                             control_block.original_data_acked += len(seg.data)
                     # 移除所有已确认的段
+                    if ack_segment.seqno < control_block.isn:
+                        control_block.unack_segments = [seg for seg in control_block.unack_segments if seg.seqno < control_block.isn]
                     control_block.unack_segments = [seg for seg in control_block.unack_segments if seg.seqno >= ack_segment.seqno]
 
                     # 如果有未确认的段，重置计时器
@@ -209,7 +211,7 @@ def send_file(filename, control_block, sender_socket):
                     if not control_block.unack_segments:
                         control_block.timer = time.time() * 1000 + control_block.rto  # 如果是第一个未确认的段，设置计时器
                     control_block.unack_segments.append(new_segment)
-                    control_block.seqno += segment_size
+                    control_block.seqno = ( control_block.seqno + segment_size) % ( 2 ** 16 - 1 )
 
                 sent_length += segment_size
 
