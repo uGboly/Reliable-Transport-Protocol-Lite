@@ -4,8 +4,9 @@ import sys
 import time
 import threading
 from STPSegment import STPSegment, DATA, ACK, SYN, FIN
-from sender_utils import SenderLogger 
+from sender_utils import SenderLogger, ConnectionManager
 MSS = 1000
+
 
 class STPControlBlock:
     def __init__(self):
@@ -19,7 +20,6 @@ class STPControlBlock:
         self.unack_segments = []  # 存储已发送但未确认的段
         self.timer = None
         self.dup_ack_count = {}  # 记录每个段的重复ACK数
-        self.fin_segment = None
         self.original_data_sent = 0
         self.original_data_acked = 0
         self.original_segments_sent = 0
@@ -29,7 +29,7 @@ class STPControlBlock:
         self.ack_segments_dropped = 0
 
 
-def send_segment(socket, address, segment, control_block, is_retransmitted = False):
+def send_segment(socket, address, segment, control_block, is_retransmitted=False):
     num_bytes = len(segment.data) if segment.type == DATA else 0
 
     if random.random() < flp:
@@ -38,7 +38,6 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
             if not is_retransmitted:
                 control_block.original_data_sent += num_bytes
                 control_block.original_segments_sent += 1
-
 
         logger.log("drp", segment.type, segment.seqno, num_bytes)
     else:
@@ -51,7 +50,7 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
             else:
                 control_block.original_data_sent += num_bytes
                 control_block.original_segments_sent += 1
-        
+
 
 def receive_segment(socket, control_block):
     response, _ = socket.recvfrom(1024)
@@ -65,47 +64,17 @@ def receive_segment(socket, control_block):
         logger.log("rcv", segment.type, segment.seqno)
         return segment
 
-def establish_connection(sender_socket, receiver_address, control_block):
-    # 创建并发送SYN段
-    syn_segment = STPSegment(SYN, control_block.isn)
-    send_segment(sender_socket, receiver_address, syn_segment, control_block)
-
-
-    # 设置接收ACK的超时
-    sender_socket.settimeout(control_block.rto / 1000.0)
-
-    # 等待接收ACK
-    while True:
-        try:
-            ack_segment = receive_segment(sender_socket, control_block)
-            
-            if ack_segment.type == ACK and ack_segment.seqno == control_block.isn + 1:
-                control_block.ackno = ack_segment.seqno
-                control_block.state = "ESTABLISHED"
-                break
-        except socket.timeout:
-            send_segment(sender_socket, receiver_address, syn_segment, control_block)
-        except AttributeError:
-            continue
-
 
 def ack_receiver(control_block, sender_socket):
     while True:
-        # 接收ACK
+        if control_block.state == "FIN_WAIT":
+            break
         try:
             ack_segment = receive_segment(sender_socket, control_block)
 
-            if ack_segment.type != ACK:
-                continue  # 忽略非ACK段
-
             with control_block.lock:
-                if control_block.state == "FIN_WAIT" and ack_segment.seqno == control_block.seqno + 1:
-                    #如果在FIN_WAIT状态，检查到对FIN的ACK，则进入CLOSE状态并退出循环
-                    control_block.fin_segment = None
-                    control_block.state = "CLOSE"
-                    break
                 # 检查ACK是否为新的
-                elif ack_segment.seqno >= control_block.ackno or ack_segment.seqno < control_block.isn:
+                if ack_segment.seqno >= control_block.ackno or ack_segment.seqno < control_block.isn:
                     # 更新确认号
                     control_block.ackno = ack_segment.seqno
 
@@ -114,8 +83,10 @@ def ack_receiver(control_block, sender_socket):
                             control_block.original_data_acked += len(seg.data)
                     # 移除所有已确认的段
                     if ack_segment.seqno < control_block.isn:
-                        control_block.unack_segments = [seg for seg in control_block.unack_segments if seg.seqno < control_block.isn]
-                    control_block.unack_segments = [seg for seg in control_block.unack_segments if seg.seqno >= ack_segment.seqno]
+                        control_block.unack_segments = [
+                            seg for seg in control_block.unack_segments if seg.seqno < control_block.isn]
+                    control_block.unack_segments = [
+                        seg for seg in control_block.unack_segments if seg.seqno >= ack_segment.seqno]
 
                     # 如果有未确认的段，重置计时器
                     if control_block.unack_segments:
@@ -139,7 +110,8 @@ def ack_receiver(control_block, sender_socket):
                         # 找到需要重传的段
                         for seg in control_block.unack_segments:
                             if seg.seqno == ack_segment.seqno:
-                                send_segment(sender_socket, receiver_address, seg.serialize, control_block, True)
+                                send_segment(
+                                    sender_socket, receiver_address, seg.serialize, control_block, True)
                                 # 重置计时器
                                 control_block.timer = time.time() * 1000 + control_block.rto
                                 break
@@ -150,11 +122,11 @@ def ack_receiver(control_block, sender_socket):
         except AttributeError:
             continue
 
+
 def timer_thread(control_block, sender_socket):
     while True:
         with control_block.lock:
-            if control_block.state == "CLOSE":
-                #如果在CLOSE状态，退出循环
+            if control_block.state == "FIN_WAIT":
                 break
             if control_block.timer is not None:
                 current_time = time.time() * 1000  # 当前时间，单位为毫秒
@@ -163,17 +135,13 @@ def timer_thread(control_block, sender_socket):
                     # 如果有未确认的段，则重传最老的未确认段
                     if control_block.unack_segments:
                         oldest_unack_segment = control_block.unack_segments[0]
-                        send_segment(sender_socket, receiver_address, oldest_unack_segment, control_block, True)
+                        send_segment(sender_socket, receiver_address,
+                                     oldest_unack_segment, control_block, True)
                         # 重置计时器
                         control_block.timer = current_time + control_block.rto
 
                         # 重置dup_ack_count，因为我们已经重传了段
                         control_block.dup_ack_count = {}
-                    elif control_block.state == "FIN_WAIT" and control_block.fin_segment:
-                        #FIN超时，只重传FIN与重置计时器，无需重置dup_ack_count
-                        send_segment(sender_socket, receiver_address, control_block.fin_segment, control_block, True)
-                        control_block.timer = current_time + control_block.rto
-
 
 
 def send_file(filename, control_block, sender_socket):
@@ -185,46 +153,35 @@ def send_file(filename, control_block, sender_socket):
         # 数据发送循环
         while sent_length < total_length or control_block.unack_segments:
             with control_block.lock:
-                window_space = control_block.window_size - (len(control_block.unack_segments) * MSS)
+                window_space = control_block.window_size - \
+                    (len(control_block.unack_segments) * MSS)
 
             # 确定是否有窗口空间发送更多数据
             if window_space > 0 and sent_length < total_length:
                 # 确定本次发送的数据大小
-                segment_size = min(MSS, total_length - sent_length, window_space)
+                segment_size = min(MSS, total_length -
+                                   sent_length, window_space)
                 segment_data = file_data[sent_length:sent_length+segment_size]
-                new_segment = STPSegment(DATA, control_block.seqno, segment_data)
-                send_segment(sender_socket, receiver_address, new_segment, control_block)
+                new_segment = STPSegment(
+                    DATA, control_block.seqno, segment_data)
+                send_segment(sender_socket, receiver_address,
+                             new_segment, control_block)
                 with control_block.lock:
                     # 更新控制块信息
                     if not control_block.unack_segments:
                         control_block.timer = time.time() * 1000 + control_block.rto  # 如果是第一个未确认的段，设置计时器
                     control_block.unack_segments.append(new_segment)
-                    control_block.seqno = ( control_block.seqno + segment_size) % ( 2 ** 16 - 1 )
+                    control_block.seqno = (
+                        control_block.seqno + segment_size) % (2 ** 16 - 1)
 
                 sent_length += segment_size
 
-
-def close_connection(sender_socket, receiver_address, control_block):
     while True:
         with control_block.lock:
-            if not control_block.unack_segments: #确保文件已经可靠地到达receiver
-                # 创建并发送FIN段
-                fin_segment = STPSegment(FIN, control_block.seqno)
-                control_block.fin_segment = fin_segment
-                send_segment(sender_socket, receiver_address, fin_segment, control_block)
-                control_block.timer = time.time() * 1000 + control_block.rto #重置计时器以便FIN超时时重传
+            if not control_block.unack_segments:
                 control_block.state = "FIN_WAIT"
-                break    
+                break
 
-def finalize_log(control_block):
-    with open("sender_log.txt", "a") as log_file:
-        log_file.write(f"Original data sent: {control_block.original_data_sent}\n")
-        log_file.write(f"Original data acked: {control_block.original_data_acked}\n")
-        log_file.write(f"Original segments sent: {control_block.original_segments_sent}\n")
-        log_file.write(f"Retransmitted segments: {control_block.retransmitted_segments}\n")
-        log_file.write(f"Dup acks received: {control_block.dup_acks_received}\n")
-        log_file.write(f"Data segments dropped: {control_block.data_segments_dropped}\n")
-        log_file.write(f"Ack segments dropped: {control_block.ack_segments_dropped}\n")
 
 if __name__ == '__main__':
     if len(sys.argv) != 8:
@@ -248,25 +205,22 @@ if __name__ == '__main__':
     sender_address = ('localhost', receiver_port)
     receiver_address = ('localhost', receiver_port)
 
-    establish_connection(sender_socket, receiver_address, control_block)
+    connection_manager = ConnectionManager(
+        sender_socket, receiver_address, control_block, logger, rto, flp, rlp)
+    connection_manager.setup()
 
     if control_block.state != "ESTABLISHED":
         print("Failed to establish connection.")
         sys.exit(1)
 
-    ack_thread = threading.Thread(target=ack_receiver, args=(control_block, sender_socket))
-    timer_thread = threading.Thread(target=timer_thread, args=(control_block, sender_socket))
+    ack_thread = threading.Thread(
+        target=ack_receiver, args=(control_block, sender_socket))
+    timer_thread = threading.Thread(
+        target=timer_thread, args=(control_block, sender_socket))
     ack_thread.start()
     timer_thread.start()
 
     send_file(txt_file_to_send, control_block, sender_socket)
-
-    close_connection(sender_socket, receiver_address, control_block)
-
     ack_thread.join()
     timer_thread.join()
-
-    sender_socket.close()
-
-    with control_block.lock:
-        logger.log_statatics(control_block)
+    connection_manager.finish()
