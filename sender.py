@@ -1,9 +1,8 @@
 import socket
 import random
 import sys
-import time
 import threading
-from sender_utils import SenderLogger, ConnectionManager, DataTransmissionManager
+from sender_utils import SenderLogger, ConnectionManager, DataTransmissionManager, AckReceiver, TimerManager
 
 
 class SenderControlBlock:
@@ -25,83 +24,6 @@ class SenderControlBlock:
         self.dup_acks_received = 0
         self.data_segments_dropped = 0
         self.ack_segments_dropped = 0
-
-
-def ack_receiver(control_block):
-    while True:
-        if control_block.state == "FIN_WAIT":
-            break
-        try:
-            ack_segment = connection_manager.receive_message()
-
-            with control_block.lock:
-                # 检查ACK是否为新的
-                if ack_segment.seqno >= control_block.ackno or ack_segment.seqno < control_block.init_seqno:
-                    # 更新确认号
-                    control_block.ackno = ack_segment.seqno
-
-                    for seg in control_block.sliding_window:
-                        if seg.seqno < ack_segment.seqno:
-                            control_block.original_data_acked += len(seg.data)
-                    # 移除所有已确认的段
-                    if ack_segment.seqno < control_block.init_seqno:
-                        control_block.sliding_window = [
-                            seg for seg in control_block.sliding_window if seg.seqno < control_block.init_seqno]
-                    control_block.sliding_window = [
-                        seg for seg in control_block.sliding_window if seg.seqno >= ack_segment.seqno]
-
-                    # 如果有未确认的段，重置计时器
-                    if control_block.sliding_window:
-                        control_block.timer = time.time() * 1000 + control_block.rto
-                    else:
-                        control_block.timer = None
-
-                    # 重置ack_counter
-                    control_block.ack_counter = {}
-
-                else:
-                    # 处理重复ACK
-                    control_block.dup_acks_received += 1
-                    if ack_segment.seqno in control_block.ack_counter:
-                        control_block.ack_counter[ack_segment.seqno] += 1
-                    else:
-                        control_block.ack_counter[ack_segment.seqno] = 1
-
-                    # 如果ack_counter等于3，进行快速重传
-                    if control_block.ack_counter[ack_segment.seqno] == 3:
-                        # 找到需要重传的段
-                        for seg in control_block.sliding_window:
-                            if seg.seqno == ack_segment.seqno:
-                                connection_manager.send_message(seg, True)
-                                # 重置计时器
-                                control_block.timer = time.time() * 1000 + control_block.rto
-                                break
-
-        except socket.timeout:
-            pass
-        except AttributeError:
-            pass
-
-
-def timer_thread(control_block):
-    while True:
-        with control_block.lock:
-            if control_block.state == "FIN_WAIT":
-                break
-            if control_block.timer is not None:
-                current_time = time.time() * 1000  # 当前时间，单位为毫秒
-                # 检查计时器是否超时
-                if current_time >= control_block.timer:
-                    # 如果有未确认的段，则重传最老的未确认段
-                    if control_block.sliding_window:
-                        oldest_unack_segment = control_block.sliding_window[0]
-                        connection_manager.send_message(
-                            oldest_unack_segment, True)
-                        # 重置计时器
-                        control_block.timer = current_time + control_block.rto
-
-                        # 重置ack_counter，因为我们已经重传了段
-                        control_block.ack_counter = {}
 
 
 if __name__ == '__main__':
@@ -130,18 +52,20 @@ if __name__ == '__main__':
         sender_socket, receiver_address, control_block, logger, rto, flp, rlp)
     connection_manager.setup()
 
-    ack_thread = threading.Thread(
-        target=ack_receiver, args=[control_block])
-    timer_thread = threading.Thread(
-        target=timer_thread, args=[control_block])
-    ack_thread.start()
-    timer_thread.start()
+    ack_receiver_instance = AckReceiver(control_block, connection_manager)
+    ack_receiver = threading.Thread(target=ack_receiver_instance.run)
+
+    timer_manager_instance = TimerManager(control_block, connection_manager)
+    timer_manager = threading.Thread(target=timer_manager_instance.run)
+
+    ack_receiver.start()
+    timer_manager.start()
 
     with open(txt_file_to_send, 'rb') as file:
         data = file.read()
         DataTransmissionManager(control_block, connection_manager, data)
         control_block.state = "FIN_WAIT"
 
-    ack_thread.join()
-    timer_thread.join()
+    ack_receiver.join()
+    timer_manager.join()
     connection_manager.finish()

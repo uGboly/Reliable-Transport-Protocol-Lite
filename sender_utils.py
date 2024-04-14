@@ -163,3 +163,85 @@ class DataTransmissionManager:
             self.control_block.sliding_window.append(new_segment)
             self.control_block.seqno = (
                 self.control_block.seqno + segment_size) % (2 ** 16 - 1)
+
+class AckReceiver:
+    def __init__(self, control_block, connection_manager):
+        self.control_block = control_block
+        self.connection_manager = connection_manager
+
+    def run(self):
+        while True:
+            if self.control_block.state == "FIN_WAIT":
+                break
+
+            try:
+                ack_segment = self.connection_manager.receive_message()
+                self.process_ack_segment(ack_segment)
+            except socket.timeout:
+                continue
+            except AttributeError:
+                continue
+
+    def process_ack_segment(self, ack_segment):
+        with self.control_block.lock:
+            if self.is_new_ack(ack_segment):
+                self.update_control_block_for_new_ack(ack_segment)
+            else:
+                self.handle_duplicate_ack(ack_segment)
+
+    def is_new_ack(self, ack_segment):
+        return ack_segment.seqno >= self.control_block.ackno or ack_segment.seqno < self.control_block.init_seqno
+
+    def update_control_block_for_new_ack(self, ack_segment):
+        self.control_block.ackno = ack_segment.seqno
+        # Update original data acked and sliding window
+        self.control_block.original_data_acked += sum(len(seg.data) for seg in self.control_block.sliding_window if seg.seqno < ack_segment.seqno)
+        self.control_block.sliding_window = [seg for seg in self.control_block.sliding_window if seg.seqno >= ack_segment.seqno]
+        # Reset timer if there are unacknowledged segments
+        self.control_block.timer = time.time() * 1000 + self.control_block.rto if self.control_block.sliding_window else None
+        self.control_block.ack_counter = {}
+
+    def handle_duplicate_ack(self, ack_segment):
+        self.control_block.dup_acks_received += 1
+        self.control_block.ack_counter[ack_segment.seqno] = self.control_block.ack_counter.get(ack_segment.seqno, 0) + 1
+        if self.control_block.ack_counter[ack_segment.seqno] == 3:
+            self.fast_retransmit(ack_segment.seqno)
+
+    def fast_retransmit(self, seqno):
+        for seg in self.control_block.sliding_window:
+            if seg.seqno == seqno:
+                self.connection_manager.send_message(seg, True)
+                # Reset timer
+                self.control_block.timer = time.time() * 1000 + self.control_block.rto
+                break
+
+
+class TimerManager:
+    def __init__(self, control_block, connection_manager):
+        self.control_block = control_block
+        self.connection_manager = connection_manager
+
+    def run(self):
+        while True:
+            with self.control_block.lock:
+                if self.control_block.state == "FIN_WAIT":
+                    break
+                self.check_and_handle_timeout()
+
+    def check_and_handle_timeout(self):
+        current_time = time.time() * 1000  # Current time in milliseconds
+        if self.control_block.timer is not None and current_time >= self.control_block.timer:
+            self.handle_timeout()
+
+    def handle_timeout(self):
+        if self.control_block.sliding_window:
+            oldest_unack_segment = self.control_block.sliding_window[0]
+            self.retransmit_segment(oldest_unack_segment)
+            # Reset the timer for the next timeout check
+            self.control_block.timer = time.time() * 1000 + self.control_block.rto
+            # Reset the ACK counter since we're performing a retransmission
+            self.control_block.ack_counter = {}
+
+    def retransmit_segment(self, segment):
+        # Logic to mark the segment as a retransmission could be added here
+        self.connection_manager.send_message(segment, True)

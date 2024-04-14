@@ -5,6 +5,7 @@ ACK = 1
 SYN = 2
 FIN = 3
 
+
 class STPSegment:
     def __init__(self, type, seqno, data=b''):
         self.type = type
@@ -21,5 +22,3 @@ class STPSegment:
         type, seqno = struct.unpack('!HH', header)
         data = packet[4:]
         return STPSegment(type, seqno, data)
-    
-
