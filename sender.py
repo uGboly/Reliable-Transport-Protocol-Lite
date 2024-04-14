@@ -63,7 +63,8 @@ if __name__ == '__main__':
 
     with open(txt_file_to_send, 'rb') as file:
         data = file.read()
-        DataTransmissionManager(control_block, connection_manager, data)
+        data_transmission_manager = DataTransmissionManager(control_block, connection_manager, data)
+        data_transmission_manager.send_data()
         control_block.state = "FIN_WAIT"
 
     ack_receiver.join()
