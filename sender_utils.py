@@ -124,6 +124,8 @@ class ConnectionManager:
 
 
 class DataTransmissionManager:
+    MSS = 1000  # Maximum Segment Size
+
     def __init__(self, control_block, connection_manager, data):
         self.control_block = control_block
         self.connection_manager = connection_manager
@@ -134,23 +136,30 @@ class DataTransmissionManager:
         sent_length = 0
 
         while sent_length < total_length or self.control_block.sliding_window:
-            with self.control_block.lock:
-                window_space = self.control_block.max_win - \
-                    (len(self.control_block.sliding_window) * 1000)
+            window_space = self.calculate_window_space()
 
             if window_space > 0 and sent_length < total_length:
-                # 确定本次发送的数据大小
-                segment_size = min(1000, total_length -
-                                   sent_length, window_space)
-                segment_data = self.data[sent_length:sent_length+segment_size]
-                new_segment = STPSegment(
-                    DATA, self.control_block.seqno, segment_data)
-                self.connection_manager.send_message(new_segment)
-                with self.control_block.lock:
-                    if not self.control_block.sliding_window:
-                        self.control_block.timer = time.time() * 1000 + self.control_block.rto
-                    self.control_block.sliding_window.append(new_segment)
-                    self.control_block.seqno = (
-                        self.control_block.seqno + segment_size) % (2 ** 16 - 1)
-
+                segment_size, segment_data = self.segment_data(
+                    sent_length, total_length, window_space)
+                self.send_segment_data(segment_data, segment_size)
                 sent_length += segment_size
+
+    def calculate_window_space(self):
+        with self.control_block.lock:
+            return self.control_block.max_win - (len(self.control_block.sliding_window) * self.MSS)
+
+    def segment_data(self, sent_length, total_length, window_space):
+        segment_size = min(self.MSS, total_length - sent_length, window_space)
+        segment_data = self.data[sent_length:sent_length + segment_size]
+        return segment_size, segment_data
+
+    def send_segment_data(self, segment_data, segment_size):
+        new_segment = STPSegment(DATA, self.control_block.seqno, segment_data)
+        self.connection_manager.send_message(new_segment)
+
+        with self.control_block.lock:
+            if not self.control_block.sliding_window:
+                self.control_block.timer = time.time() * 1000 + self.control_block.rto
+            self.control_block.sliding_window.append(new_segment)
+            self.control_block.seqno = (
+                self.control_block.seqno + segment_size) % (2 ** 16 - 1)

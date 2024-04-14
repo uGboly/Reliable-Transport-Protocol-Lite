@@ -6,7 +6,7 @@ import threading
 from sender_utils import SenderLogger, ConnectionManager, DataTransmissionManager
 
 
-class STPControlBlock:
+class SenderControlBlock:
     def __init__(self):
         self.state = "CLOSED"
         self.init_seqno = random.randint(0, 65535)
@@ -120,7 +120,7 @@ if __name__ == '__main__':
     random.seed()
     logger = SenderLogger("sender_log.txt")
 
-    control_block = STPControlBlock()
+    control_block = SenderControlBlock()
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
     sender_address = ('localhost', receiver_port)
