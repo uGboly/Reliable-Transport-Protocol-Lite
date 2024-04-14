@@ -47,8 +47,8 @@ class STPReceiver:
                 segment = STPSegment.unpack(packet)
                 if segment.segment_type == SEGMENT_TYPE_SYN:
                     self.log_event("rcv", segment, 0)
-                    self.expected_seqno = (segment.seqno + 1) % ( 2 ** 16 - 1 )
-                    self.isn = (segment.seqno + 1) % ( 2 ** 16 - 1 )
+                    self.expected_seqno = (segment.seqno + 1) % (2 ** 16)
+                    self.isn = (segment.seqno + 1) % (2 ** 16)
                     ack_segment = STPSegment(
                         SEGMENT_TYPE_ACK, self.expected_seqno)
                     self.receiver_socket.sendto(
@@ -77,7 +77,6 @@ class STPReceiver:
                         self.total_ack_segments_sent += 1
                         self.log_event("snd", ack_segment, 0)
 
-                    
                     if segment.segment_type == SEGMENT_TYPE_DATA:
                         self.log_event("rcv", segment, len(segment.data))
                         # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
@@ -86,13 +85,14 @@ class STPReceiver:
                             self.original_segments_received += 1
                             file.write(segment.data)
                             self.expected_seqno = (
-                                self.expected_seqno + len(segment.data)) % ( 2 ** 16 - 1 )
+                                self.expected_seqno + len(segment.data)) % (2 ** 16)
 
                             # 检查并写入缓冲区中按序的数据
                             while self.expected_seqno in buffer:
                                 data = buffer.pop(self.expected_seqno)
                                 file.write(data)
-                                self.expected_seqno = (self.expected_seqno + len(data)) % ( 2 ** 16 - 1 )
+                                self.expected_seqno = (
+                                    self.expected_seqno + len(data)) % (2 ** 16)
                         elif segment.seqno > self.expected_seqno:  # 到达了乱序数据
                             if segment.seqno in buffer:
                                 self.dup_data_segments_received += 1
@@ -121,7 +121,8 @@ class STPReceiver:
 
     def handle_fin(self, sender_address):
         # 发送ACK for FIN
-        ack_segment = STPSegment(SEGMENT_TYPE_ACK, (self.expected_seqno + 1) % ( 2 ** 16 - 1 ))
+        ack_segment = STPSegment(
+            SEGMENT_TYPE_ACK, (self.expected_seqno + 1) % (2 ** 16))
         self.receiver_socket.sendto(ack_segment.pack(), sender_address)
         self.total_ack_segments_sent += 1
         self.log_event("snd", ack_segment, 0)
