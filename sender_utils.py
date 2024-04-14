@@ -213,15 +213,13 @@ class AckReceiver:
         self.ctrlblo.ack_counter[ack_segment.seqno] = self.ctrlblo.ack_counter.get(
             ack_segment.seqno, 0) + 1
         if self.ctrlblo.ack_counter[ack_segment.seqno] == 3:
-            self.fast_retransmit(ack_segment.seqno)
+            self.fast_retransmit()
 
-    def fast_retransmit(self, seqno):
-        for seg in self.ctrlblo.sliding_window:
-            if seg.seqno == seqno:
-                self.connection_manager.send_message(seg, True)
-                # Reset timer
-                self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
-                break
+    def fast_retransmit(self):
+        self.connection_manager.send_message(self.ctrlblo.sliding_window[0], True)
+        # Reset timer
+        self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
+        self.ctrlblo.ack_counter = {}
 
 
 class TimerManager:
