@@ -1,8 +1,8 @@
 import socket
 import sys
 import threading
-import time
 from STPSegment import STPSegment, DATA, ACK, SYN, FIN
+from receiver_utils import ReceiverLogger
 
 
 class STPReceiver:
@@ -11,7 +11,7 @@ class STPReceiver:
         self.sender_port = sender_port
         self.file_to_save = file_to_save
         self.max_win = max_win
-        self.isn = 0
+        self.init_seqno = 0
         self.expected_seqno = 0
         self.receiver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.receiver_socket.bind(('', receiver_port))
@@ -20,24 +20,11 @@ class STPReceiver:
         self.dup_data_segments_received = 0
         self.total_ack_segments_sent = 0
         self.receiver_socket.settimeout(2.0)
+        self.logger = ReceiverLogger()
 
     def start(self):
         self.handle_syn()
         self.receive_data()
-
-    def log_event(self, action, segment, num_bytes):
-        current_time = time.time() * 1000
-        segment_type_str = {DATA: "DATA", ACK: "ACK",
-                            SYN: "SYN", FIN: "FIN"}.get(segment.type, "UNKNOWN")
-        if segment_type_str == "SYN":
-            self.start_time = current_time
-            time_offset = 0
-        else:
-            time_offset = current_time - self.start_time
-
-        with open("receiver_log.txt", "a") as log_file:
-            log_file.write(
-                f"{action} {time_offset:.2f} {segment_type_str} {segment.seqno} {num_bytes}\n")
 
     def handle_syn(self):
         # 等待并处理SYN
@@ -46,15 +33,15 @@ class STPReceiver:
                 packet, sender_address = self.receiver_socket.recvfrom(1024)
                 segment = STPSegment.unserialize(packet)
                 if segment.type == SYN:
-                    self.log_event("rcv", segment, 0)
-                    self.expected_seqno = (segment.seqno + 1) % ( 2 ** 16 - 1 )
-                    self.isn = (segment.seqno + 1) % ( 2 ** 16 - 1 )
+                    self.logger.log("rcv", segment)
+                    self.expected_seqno = (segment.seqno + 1) % (2 ** 16 - 1)
+                    self.init_seqno = (segment.seqno + 1) % (2 ** 16 - 1)
                     ack_segment = STPSegment(
                         ACK, self.expected_seqno)
                     self.receiver_socket.sendto(
                         ack_segment.serialize(), sender_address)
                     self.total_ack_segments_sent += 1
-                    self.log_event("snd", ack_segment, 0)
+                    self.logger.log("snd", ack_segment)
                     break
             except socket.timeout:
                 continue
@@ -69,30 +56,30 @@ class STPReceiver:
                     segment = STPSegment.unserialize(packet)
 
                     if segment.type == SYN:
-                        self.log_event("rcv", segment, 0)
+                        self.logger.log("rcv", segment)
                         ack_segment = STPSegment(
-                            ACK, self.isn)
+                            ACK, self.init_seqno)
                         self.receiver_socket.sendto(
                             ack_segment.serialize(), sender_address)
                         self.total_ack_segments_sent += 1
-                        self.log_event("snd", ack_segment, 0)
+                        self.logger.log("snd", ack_segment)
 
-                    
                     if segment.type == DATA:
-                        self.log_event("rcv", segment, len(segment.data))
+                        self.logger.log("rcv", segment, len(segment.data))
                         # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
                         if segment.seqno == self.expected_seqno:
                             self.original_data_received += len(segment.data)
                             self.original_segments_received += 1
                             file.write(segment.data)
                             self.expected_seqno = (
-                                self.expected_seqno + len(segment.data)) % ( 2 ** 16 - 1 )
+                                self.expected_seqno + len(segment.data)) % (2 ** 16 - 1)
 
                             # 检查并写入缓冲区中按序的数据
                             while self.expected_seqno in buffer:
                                 data = buffer.pop(self.expected_seqno)
                                 file.write(data)
-                                self.expected_seqno = (self.expected_seqno + len(data)) % ( 2 ** 16 - 1 )
+                                self.expected_seqno = (
+                                    self.expected_seqno + len(data)) % (2 ** 16 - 1)
                         elif segment.seqno > self.expected_seqno:  # 到达了乱序数据
                             if segment.seqno in buffer:
                                 self.dup_data_segments_received += 1
@@ -110,10 +97,10 @@ class STPReceiver:
                             ACK, self.expected_seqno)
                         self.receiver_socket.sendto(
                             ack_segment.serialize(), sender_address)
-                        self.log_event("snd", ack_segment, 0)
+                        self.logger.log("snd", ack_segment)
 
                     if segment.type == FIN:
-                        self.log_event("rcv", segment, 0)
+                        self.logger.log("rcv", segment)
                         self.handle_fin(sender_address)
                         break
                 except socket.timeout:
@@ -121,10 +108,11 @@ class STPReceiver:
 
     def handle_fin(self, sender_address):
         # 发送ACK for FIN
-        ack_segment = STPSegment(ACK, (self.expected_seqno + 1) % ( 2 ** 16 - 1 ))
+        ack_segment = STPSegment(
+            ACK, (self.expected_seqno + 1) % (2 ** 16 - 1))
         self.receiver_socket.sendto(ack_segment.serialize(), sender_address)
         self.total_ack_segments_sent += 1
-        self.log_event("snd", ack_segment, 0)
+        self.logger.log("snd", ack_segment)
 
         # 定义处理FIN重传的线程函数
         def handle_fin_retransmissions():
@@ -135,10 +123,10 @@ class STPReceiver:
 
                     if segment.type == FIN:
                         # 对于重传的FIN，再次发送ACK
-                        self.log_event("rcv", segment, 0)
+                        self.logger.log("rcv", segment, 0)
                         self.receiver_socket.sendto(
                             ack_segment.serialize(), sender_address)
-                        self.log_event("snd", ack_segment, 0)
+                        self.logger.log("snd", ack_segment)
             except socket.timeout:
                 # 超时意味着没有收到更多的FIN重传，线程结束
                 pass
@@ -147,18 +135,7 @@ class STPReceiver:
         fin_thread = threading.Thread(target=handle_fin_retransmissions)
         fin_thread.start()
         fin_thread.join()
-        self.finalize_log()
-
-    def finalize_log(self):
-        with open("receiver_log.txt", "a") as log_file:
-            log_file.write(
-                f"Original data received: {self.original_data_received}\n")
-            log_file.write(
-                f"Original segments received: {self.original_segments_received}\n")
-            log_file.write(
-                f"Dup data segments received: {self.dup_data_segments_received}\n")
-            log_file.write(
-                f"Dup ack segments sent: {self.total_ack_segments_sent - self.original_segments_received - 2}\n")
+        self.logger.log_statatics(self)
 
 
 if __name__ == '__main__':

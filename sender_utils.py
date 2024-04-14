@@ -10,14 +10,13 @@ class SenderLogger:
         self.init_time = None
 
     def log(self, action_type, type, seqno, len=0):
+        current_time = time.time() * 1000
         if self.init_time is None:
             self.init_time = time.time() * 1000
-            interval = 0
             with open(self.log_file_path, "w") as log_file:
                 log_file.write("")
-        else:
-            current_time = time.time() * 1000
-            interval = current_time - self.init_time
+
+        interval = current_time - self.init_time
 
         type_name_list = ["DATA", "ACK", "SYN", "FIN"]
         log_entry = f"{action_type} {interval:.2f} {type_name_list[type]} {seqno} {len}\n"
