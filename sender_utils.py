@@ -99,7 +99,6 @@ class ConnectionManager:
                     self.ctrlblo.original_data_sent += message_length
                     self.ctrlblo.original_segments_sent += 1
 
-
     def receive_message(self):
         # Logic to receive a segment
         response, _ = self.sender_socket.recvfrom(1024)
@@ -193,10 +192,17 @@ class AckReceiver:
     def update_ctrlblo_for_new_ack(self, ack_segment):
         self.ctrlblo.ackno = ack_segment.seqno
         # Update original data acked and sliding window
-        self.ctrlblo.original_data_acked += sum(len(
-            seg.data) for seg in self.ctrlblo.sliding_window if seg.seqno < ack_segment.seqno)
+
+        if ack_segment.seqno < self.ctrlblo.init_seqno:
+            self.ctrlblo.sliding_window = [
+                seg for seg in self.ctrlblo.sliding_window if seg.seqno < self.ctrlblo.init_seqno]
+            self.ctrlblo.original_data_acked += sum(len(
+                seg.data) for seg in self.ctrlblo.sliding_window if seg.seqno >= self.ctrlblo.init_seqno)
+
         self.ctrlblo.sliding_window = [
             seg for seg in self.ctrlblo.sliding_window if seg.seqno >= ack_segment.seqno]
+        self.ctrlblo.original_data_acked += sum(len(
+            seg.data) for seg in self.ctrlblo.sliding_window if seg.seqno < ack_segment.seqno)
         # Reset timer if there are unacknowledged segments
         self.ctrlblo.timer = time.time() * 1000 + \
             self.ctrlblo.rto if self.ctrlblo.sliding_window else None
