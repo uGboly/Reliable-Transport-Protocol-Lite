@@ -40,9 +40,9 @@ if __name__ == '__main__':
     rlp = float(sys.argv[7])
 
     random.seed()
+    control_block = SenderControlBlock()
     logger = SenderLogger("sender_log.txt")
 
-    control_block = SenderControlBlock()
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
     sender_address = ('localhost', receiver_port)
