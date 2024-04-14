@@ -11,7 +11,7 @@ class Receiver:
         self.file_to_save = file_to_save
         self.max_win = max_win
         self.init_seqno = 0
-        self.expected_seqno = 0
+        self.next_seqno = 0
         self.rcv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rcv_socket.bind(('', receiver_port))
         self.window_manager = WindowManager(self, file_to_save)
@@ -51,8 +51,8 @@ if __name__ == '__main__':
             segment, origination = receiver.receive_segment()
             if segment.type == SYN:
                 receiver.init_seqno = (segment.seqno + 1) % (2 ** 16 - 1)
-                receiver.expected_seqno = receiver.init_seqno
-                receiver.send_ack(receiver.expected_seqno, origination)
+                receiver.next_seqno = receiver.init_seqno
+                receiver.send_ack(receiver.next_seqno, origination)
                 break
         except socket.timeout:
             continue
@@ -68,7 +68,7 @@ if __name__ == '__main__':
                     receiver.send_ack(receiver.init_seqno, origination)
                 case 0:
                     receiver.window_manager.handle_segment(segment)
-                    receiver.send_ack(receiver.expected_seqno, origination)
+                    receiver.send_ack(receiver.next_seqno, origination)
                 case _:
                     pass
 
@@ -76,7 +76,7 @@ if __name__ == '__main__':
             continue
 
 
-    receiver.send_ack((receiver.expected_seqno + 1) %
+    receiver.send_ack((receiver.next_seqno + 1) %
                       (2 ** 16 - 1), origination)
 
     try:
@@ -84,7 +84,7 @@ if __name__ == '__main__':
             segment, _ = receiver.receive_segment()
 
             if segment.type == FIN:
-                receiver.send_ack((receiver.expected_seqno + 1) %
+                receiver.send_ack((receiver.next_seqno + 1) %
                                   (2 ** 16 - 1), origination)
     except socket.timeout:
         pass

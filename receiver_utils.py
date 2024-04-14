@@ -38,26 +38,23 @@ class WindowManager:
 
     def handle_segment(self, segment):
         with open(self.file_path, 'ab') as file:
-            if segment.seqno == self.receiver.expected_seqno:  # In-order segment
+            if segment.seqno == self.receiver.next_seqno:  # In-order segment
                 self.original_data_received += len(segment.data)
                 self.original_segments_received += 1
                 file.write(segment.data)
-                self.update_expected_seqno(len(segment.data))
+                self.update_next_seqno(len(segment.data))
 
                 # Write any buffered, now in-order, segments
-                while self.receiver.expected_seqno in self.win:
-                    data = self.win.pop(self.receiver.expected_seqno)
+                while self.receiver.next_seqno in self.win:
+                    data = self.win.pop(self.receiver.next_seqno)
                     file.write(data)
-                    self.update_expected_seqno(len(data))
+                    self.update_next_seqno(len(data))
 
-            elif segment.seqno > self.receiver.expected_seqno:  # Out-of-order segment
+            elif segment.seqno > self.receiver.next_seqno:  # Out-of-order segment
                 if segment.seqno not in self.win:
                     self.win[segment.seqno] = segment.data
                 else:
                     self.dup_data_segments_received += 1
 
-    def update_expected_seqno(self, data_length):
-        self.receiver.expected_seqno = (self.receiver.expected_seqno + data_length) % (2 ** 16 - 1)
-
-    def get_stats(self):
-        return (self.original_data_received, self.original_segments_received, self.dup_data_segments_received)
+    def update_next_seqno(self, data_length):
+        self.receiver.next_seqno = (self.receiver.next_seqno + data_length) % (2 ** 16 - 1)
