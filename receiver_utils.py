@@ -11,10 +11,11 @@ class ReceiverLogger:
         current_time = time.time() * 1000
         if self.init_time is None:
             self.init_time = current_time
+            interval = 0
             with open(self.log_file_path, "w") as log_file:
                 log_file.write("")
-
-        interval = current_time - self.init_time
+        else:
+            interval = current_time - self.init_time
         type_name_list = ["DATA", "ACK", "SYN", "FIN"]
 
         with open(self.log_file_path, "a") as log_file:

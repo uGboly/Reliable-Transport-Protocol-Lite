@@ -13,10 +13,11 @@ class SenderLogger:
         current_time = time.time() * 1000
         if self.init_time is None:
             self.init_time = time.time() * 1000
+            interval = 0
             with open(self.log_file_path, "w") as log_file:
                 log_file.write("")
-
-        interval = current_time - self.init_time
+        else:
+            interval = current_time - self.init_time
 
         type_name_list = ["DATA", "ACK", "SYN", "FIN"]
         log_entry = f"{action_type} {interval:.2f} {type_name_list[type]} {seqno} {len}\n"
@@ -97,8 +98,7 @@ class ConnectionManager:
                 else:
                     self.ctrlblo.original_data_sent += message_length
                     self.ctrlblo.original_segments_sent += 1
-            self.sender_socket.sendto(
-                segment.serialize(), self.destination)
+
 
     def receive_message(self):
         # Logic to receive a segment
