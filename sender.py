@@ -3,8 +3,8 @@ import random
 import sys
 import time
 import threading
-from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
-
+from STPSegment import STPSegment, DATA, ACK, SYN, FIN
+from sender_utils import SenderLogger 
 MSS = 1000
 
 class STPControlBlock:
@@ -19,7 +19,6 @@ class STPControlBlock:
         self.unack_segments = []  # 存储已发送但未确认的段
         self.timer = None
         self.dup_ack_count = {}  # 记录每个段的重复ACK数
-        self.start_time = 0
         self.fin_segment = None
         self.original_data_sent = 0
         self.original_data_acked = 0
@@ -30,34 +29,23 @@ class STPControlBlock:
         self.ack_segments_dropped = 0
 
 
-def log_event(action, segment_type, seqno, num_bytes, control_block):
-    current_time = time.time() * 1000
-    segment_type_str = {SEGMENT_TYPE_DATA: "DATA", SEGMENT_TYPE_ACK: "ACK", SEGMENT_TYPE_SYN: "SYN", SEGMENT_TYPE_FIN: "FIN"}.get(segment_type, "UNKNOWN")
-    if segment_type_str == "SYN":
-        control_block.start_time = current_time
-        time_offset = 0
-    else:
-        time_offset = current_time - control_block.start_time
-    with open("sender_log.txt", "a") as log_file:
-        log_file.write(f"{action} {time_offset:.2f} {segment_type_str} {seqno} {num_bytes}\n")
-
 def send_segment(socket, address, segment, control_block, is_retransmitted = False):
-    num_bytes = len(segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
+    num_bytes = len(segment.data) if segment.type == DATA else 0
 
     if random.random() < flp:
-        if segment.segment_type == SEGMENT_TYPE_DATA:
+        if segment.type == DATA:
             control_block.data_segments_dropped += 1
             if not is_retransmitted:
                 control_block.original_data_sent += num_bytes
                 control_block.original_segments_sent += 1
 
 
-        log_event("drp", segment.segment_type, segment.seqno, num_bytes, control_block)
+        logger.log("drp", segment.type, segment.seqno, num_bytes)
     else:
-        socket.sendto(segment.pack(), address)
-        log_event("snd", segment.segment_type, segment.seqno, num_bytes, control_block)
+        socket.sendto(segment.serialize(), address)
+        logger.log("snd", segment.type, segment.seqno, num_bytes)
 
-        if segment.segment_type == SEGMENT_TYPE_DATA:
+        if segment.type == DATA:
             if is_retransmitted:
                 control_block.retransmitted_segments += 1
             else:
@@ -67,19 +55,19 @@ def send_segment(socket, address, segment, control_block, is_retransmitted = Fal
 
 def receive_segment(socket, control_block):
     response, _ = socket.recvfrom(1024)
-    segment = STPSegment.unpack(response)
+    segment = STPSegment.unserialize(response)
 
     if random.random() < rlp:
         control_block.ack_segments_dropped += 1
-        log_event("drp", segment.segment_type, segment.seqno, 0, control_block)
+        logger.log("drp", segment.type, segment.seqno)
         return
     else:
-        log_event("rcv", segment.segment_type, segment.seqno, 0, control_block)
+        logger.log("rcv", segment.type, segment.seqno)
         return segment
 
 def establish_connection(sender_socket, receiver_address, control_block):
     # 创建并发送SYN段
-    syn_segment = STPSegment(SEGMENT_TYPE_SYN, control_block.isn)
+    syn_segment = STPSegment(SYN, control_block.isn)
     send_segment(sender_socket, receiver_address, syn_segment, control_block)
 
 
@@ -91,7 +79,7 @@ def establish_connection(sender_socket, receiver_address, control_block):
         try:
             ack_segment = receive_segment(sender_socket, control_block)
             
-            if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
+            if ack_segment.type == ACK and ack_segment.seqno == control_block.isn + 1:
                 control_block.ackno = ack_segment.seqno
                 control_block.state = "ESTABLISHED"
                 break
@@ -107,7 +95,7 @@ def ack_receiver(control_block, sender_socket):
         try:
             ack_segment = receive_segment(sender_socket, control_block)
 
-            if ack_segment.segment_type != SEGMENT_TYPE_ACK:
+            if ack_segment.type != ACK:
                 continue  # 忽略非ACK段
 
             with control_block.lock:
@@ -151,7 +139,7 @@ def ack_receiver(control_block, sender_socket):
                         # 找到需要重传的段
                         for seg in control_block.unack_segments:
                             if seg.seqno == ack_segment.seqno:
-                                send_segment(sender_socket, receiver_address, seg.pack, control_block, True)
+                                send_segment(sender_socket, receiver_address, seg.serialize, control_block, True)
                                 # 重置计时器
                                 control_block.timer = time.time() * 1000 + control_block.rto
                                 break
@@ -204,7 +192,7 @@ def send_file(filename, control_block, sender_socket):
                 # 确定本次发送的数据大小
                 segment_size = min(MSS, total_length - sent_length, window_space)
                 segment_data = file_data[sent_length:sent_length+segment_size]
-                new_segment = STPSegment(SEGMENT_TYPE_DATA, control_block.seqno, segment_data)
+                new_segment = STPSegment(DATA, control_block.seqno, segment_data)
                 send_segment(sender_socket, receiver_address, new_segment, control_block)
                 with control_block.lock:
                     # 更新控制块信息
@@ -221,7 +209,7 @@ def close_connection(sender_socket, receiver_address, control_block):
         with control_block.lock:
             if not control_block.unack_segments: #确保文件已经可靠地到达receiver
                 # 创建并发送FIN段
-                fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
+                fin_segment = STPSegment(FIN, control_block.seqno)
                 control_block.fin_segment = fin_segment
                 send_segment(sender_socket, receiver_address, fin_segment, control_block)
                 control_block.timer = time.time() * 1000 + control_block.rto #重置计时器以便FIN超时时重传
@@ -250,12 +238,9 @@ if __name__ == '__main__':
     rto = int(sys.argv[5])
     flp = float(sys.argv[6])
     rlp = float(sys.argv[7])
-    
-
-    with open("sender_log.txt", "w") as log_file:
-        log_file.write("") 
 
     random.seed()
+    logger = SenderLogger("sender_log.txt")
 
     control_block = STPControlBlock()
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -284,4 +269,4 @@ if __name__ == '__main__':
     sender_socket.close()
 
     with control_block.lock:
-        finalize_log(control_block)
+        logger.log_statatics(control_block)

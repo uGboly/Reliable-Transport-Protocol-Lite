@@ -2,7 +2,7 @@ import socket
 import sys
 import threading
 import time
-from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
+from STPSegment import STPSegment, DATA, ACK, SYN, FIN
 
 
 class STPReceiver:
@@ -27,8 +27,8 @@ class STPReceiver:
 
     def log_event(self, action, segment, num_bytes):
         current_time = time.time() * 1000
-        segment_type_str = {SEGMENT_TYPE_DATA: "DATA", SEGMENT_TYPE_ACK: "ACK",
-                            SEGMENT_TYPE_SYN: "SYN", SEGMENT_TYPE_FIN: "FIN"}.get(segment.segment_type, "UNKNOWN")
+        segment_type_str = {DATA: "DATA", ACK: "ACK",
+                            SYN: "SYN", FIN: "FIN"}.get(segment.type, "UNKNOWN")
         if segment_type_str == "SYN":
             self.start_time = current_time
             time_offset = 0
@@ -44,15 +44,15 @@ class STPReceiver:
         while True:
             try:
                 packet, sender_address = self.receiver_socket.recvfrom(1024)
-                segment = STPSegment.unpack(packet)
-                if segment.segment_type == SEGMENT_TYPE_SYN:
+                segment = STPSegment.unserialize(packet)
+                if segment.type == SYN:
                     self.log_event("rcv", segment, 0)
                     self.expected_seqno = (segment.seqno + 1) % ( 2 ** 16 - 1 )
                     self.isn = (segment.seqno + 1) % ( 2 ** 16 - 1 )
                     ack_segment = STPSegment(
-                        SEGMENT_TYPE_ACK, self.expected_seqno)
+                        ACK, self.expected_seqno)
                     self.receiver_socket.sendto(
-                        ack_segment.pack(), sender_address)
+                        ack_segment.serialize(), sender_address)
                     self.total_ack_segments_sent += 1
                     self.log_event("snd", ack_segment, 0)
                     break
@@ -66,19 +66,19 @@ class STPReceiver:
                 try:
                     packet, sender_address = self.receiver_socket.recvfrom(
                         1024)
-                    segment = STPSegment.unpack(packet)
+                    segment = STPSegment.unserialize(packet)
 
-                    if segment.segment_type == SEGMENT_TYPE_SYN:
+                    if segment.type == SYN:
                         self.log_event("rcv", segment, 0)
                         ack_segment = STPSegment(
-                            SEGMENT_TYPE_ACK, self.isn)
+                            ACK, self.isn)
                         self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
+                            ack_segment.serialize(), sender_address)
                         self.total_ack_segments_sent += 1
                         self.log_event("snd", ack_segment, 0)
 
                     
-                    if segment.segment_type == SEGMENT_TYPE_DATA:
+                    if segment.type == DATA:
                         self.log_event("rcv", segment, len(segment.data))
                         # 如果数据段按序到达，直接写入文件，并检查缓冲区中是否有连续的后续数据
                         if segment.seqno == self.expected_seqno:
@@ -107,12 +107,12 @@ class STPReceiver:
                         # 发送ACK
                         self.total_ack_segments_sent += 1
                         ack_segment = STPSegment(
-                            SEGMENT_TYPE_ACK, self.expected_seqno)
+                            ACK, self.expected_seqno)
                         self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
+                            ack_segment.serialize(), sender_address)
                         self.log_event("snd", ack_segment, 0)
 
-                    if segment.segment_type == SEGMENT_TYPE_FIN:
+                    if segment.type == FIN:
                         self.log_event("rcv", segment, 0)
                         self.handle_fin(sender_address)
                         break
@@ -121,8 +121,8 @@ class STPReceiver:
 
     def handle_fin(self, sender_address):
         # 发送ACK for FIN
-        ack_segment = STPSegment(SEGMENT_TYPE_ACK, (self.expected_seqno + 1) % ( 2 ** 16 - 1 ))
-        self.receiver_socket.sendto(ack_segment.pack(), sender_address)
+        ack_segment = STPSegment(ACK, (self.expected_seqno + 1) % ( 2 ** 16 - 1 ))
+        self.receiver_socket.sendto(ack_segment.serialize(), sender_address)
         self.total_ack_segments_sent += 1
         self.log_event("snd", ack_segment, 0)
 
@@ -131,13 +131,13 @@ class STPReceiver:
             try:
                 while True:
                     packet, _ = self.receiver_socket.recvfrom(1024)
-                    segment = STPSegment.unpack(packet)
+                    segment = STPSegment.unserialize(packet)
 
-                    if segment.segment_type == SEGMENT_TYPE_FIN:
+                    if segment.type == FIN:
                         # 对于重传的FIN，再次发送ACK
                         self.log_event("rcv", segment, 0)
                         self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
+                            ack_segment.serialize(), sender_address)
                         self.log_event("snd", ack_segment, 0)
             except socket.timeout:
                 # 超时意味着没有收到更多的FIN重传，线程结束
