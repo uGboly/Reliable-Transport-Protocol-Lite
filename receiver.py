@@ -50,7 +50,7 @@ if __name__ == '__main__':
         try:
             segment, origination = receiver.receive_segment()
             if segment.type == SYN:
-                receiver.init_seqno = (segment.seqno + 1) % (2 ** 16 - 1)
+                receiver.init_seqno = (segment.seqno + 1) % (2 ** 16)
                 receiver.next_seqno = receiver.init_seqno
                 receiver.send_ack(receiver.next_seqno, origination)
                 break
@@ -77,7 +77,7 @@ if __name__ == '__main__':
 
 
     receiver.send_ack((receiver.next_seqno + 1) %
-                      (2 ** 16 - 1), origination)
+                      (2 ** 16), origination)
 
     try:
         while True:
@@ -85,7 +85,7 @@ if __name__ == '__main__':
 
             if segment.type == FIN:
                 receiver.send_ack((receiver.next_seqno + 1) %
-                                  (2 ** 16 - 1), origination)
+                                  (2 ** 16), origination)
     except socket.timeout:
         pass
     receiver.logger.log_statatics(receiver)

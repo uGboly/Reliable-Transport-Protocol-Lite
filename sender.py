@@ -10,7 +10,6 @@ class SenderControlBlock:
         self.state = "CLOSED"
         self.init_seqno = random.randint(0, 65535)
         self.seqno = self.init_seqno + 1
-        self.ackno = 0
         self.lock = threading.Lock()
         self.max_win = max_win
         self.rto = rto

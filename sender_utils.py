@@ -69,7 +69,6 @@ class ConnectionManager:
             try:
                 ack_segment = self.receive_message()
                 if ack_segment.type == ACK and ack_segment.seqno == expected_seqno:
-                    self.ctrlblo.ackno = ack_segment.seqno
                     self.ctrlblo.state = next_state
                     break
             except socket.timeout:
@@ -128,21 +127,24 @@ class DataTransmissionManager:
         self.data = data
 
     def send_data(self):
-        total_length = len(self.data)
-        sent_length = 0
+            total_length = len(self.data)
+            sent_length = 0
 
-        while sent_length < total_length or self.ctrlblo.sliding_window:
-            window_space = self.calculate_window_space()
+            while sent_length < total_length:
+                with self.ctrlblo.lock:
+                    window_space = self.calculate_window_space()
 
-            if window_space > 0 and sent_length < total_length:
-                segment_size, segment_data = self.segment_data(
-                    sent_length, total_length, window_space)
-                self.send_segment_data(segment_data, segment_size)
-                sent_length += segment_size
+                    if window_space > 0:
+                        segment_size, segment_data = self.segment_data(
+                            sent_length, total_length, window_space)
+                        self.send_segment_data(segment_data, segment_size)
+                        sent_length += segment_size
+            with self.ctrlblo.lock:
+                self.ctrlblo.state = "FIN_WAIT"
+
 
     def calculate_window_space(self):
-        with self.ctrlblo.lock:
-            return self.ctrlblo.max_win - (len(self.ctrlblo.sliding_window) * 1000)
+        return self.ctrlblo.max_win - (len(self.ctrlblo.sliding_window) * 1000)
 
     def segment_data(self, sent_length, total_length, window_space):
         segment_size = min(1000, total_length - sent_length, window_space)
@@ -151,14 +153,13 @@ class DataTransmissionManager:
 
     def send_segment_data(self, segment_data, segment_size):
         new_segment = STPSegment(DATA, self.ctrlblo.seqno, segment_data)
-        self.connection_manager.send_message(new_segment)
 
-        with self.ctrlblo.lock:
-            if not self.ctrlblo.sliding_window:
-                self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
-            self.ctrlblo.sliding_window.append(new_segment)
-            self.ctrlblo.seqno = (
-                self.ctrlblo.seqno + segment_size) % (2 ** 16 - 1)
+        if not self.ctrlblo.sliding_window:
+            self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
+        self.ctrlblo.sliding_window.append(new_segment)
+        self.ctrlblo.seqno = (
+            self.ctrlblo.seqno + segment_size) % (2 ** 16)
+        self.connection_manager.send_message(new_segment)
 
 
 class AckReceiver:
@@ -187,22 +188,16 @@ class AckReceiver:
                 self.handle_duplicate_ack(ack_segment)
 
     def is_new_ack(self, ack_segment):
-        return ack_segment.seqno >= self.ctrlblo.ackno or ack_segment.seqno < self.ctrlblo.init_seqno
+        return ack_segment.seqno in [(seg.seqno + len(seg.data)) % 2 ** 16 for seg in self.ctrlblo.sliding_window]
 
     def update_ctrlblo_for_new_ack(self, ack_segment):
-        self.ctrlblo.ackno = ack_segment.seqno
         # Update original data acked and sliding window
+        index_ack_seg = [index for index, seg in enumerate(
+            self.ctrlblo.sliding_window) if (seg.seqno + len(seg.data)) % 2 ** 16 == ack_segment.seqno][0]
+        for seg in self.ctrlblo.sliding_window[:index_ack_seg + 1]:
+            self.ctrlblo.original_data_acked += len(seg.data)
 
-        if ack_segment.seqno < self.ctrlblo.init_seqno:
-            self.ctrlblo.sliding_window = [
-                seg for seg in self.ctrlblo.sliding_window if seg.seqno < self.ctrlblo.init_seqno]
-            self.ctrlblo.original_data_acked += sum(len(
-                seg.data) for seg in self.ctrlblo.sliding_window if seg.seqno >= self.ctrlblo.init_seqno)
-
-        self.ctrlblo.sliding_window = [
-            seg for seg in self.ctrlblo.sliding_window if seg.seqno >= ack_segment.seqno]
-        self.ctrlblo.original_data_acked += sum(len(
-            seg.data) for seg in self.ctrlblo.sliding_window if seg.seqno < ack_segment.seqno)
+        self.ctrlblo.sliding_window = self.ctrlblo.sliding_window[index_ack_seg + 1:]
         # Reset timer if there are unacknowledged segments
         self.ctrlblo.timer = time.time() * 1000 + \
             self.ctrlblo.rto if self.ctrlblo.sliding_window else None
@@ -216,7 +211,8 @@ class AckReceiver:
             self.fast_retransmit()
 
     def fast_retransmit(self):
-        self.connection_manager.send_message(self.ctrlblo.sliding_window[0], True)
+        self.connection_manager.send_message(
+            self.ctrlblo.sliding_window[0], True)
         # Reset timer
         self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
         self.ctrlblo.ack_counter = {}

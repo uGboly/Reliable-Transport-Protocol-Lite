@@ -57,4 +57,4 @@ class WindowManager:
                     self.dup_data_segments_received += 1
 
     def update_next_seqno(self, data_length):
-        self.receiver.next_seqno = (self.receiver.next_seqno + data_length) % (2 ** 16 - 1)
+        self.receiver.next_seqno = (self.receiver.next_seqno + data_length) % (2 ** 16)
