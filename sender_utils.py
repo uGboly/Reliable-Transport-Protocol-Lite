@@ -3,17 +3,18 @@ import socket
 import random
 from STPSegment import STPSegment, ACK, DATA, SYN, FIN
 
+
 class SenderLogger:
     def __init__(self, log_file_path):
         self.log_file_path = log_file_path
         self.init_time = None
 
-    def log(self, action_type, type, seqno, len = 0):
+    def log(self, action_type, type, seqno, len=0):
         if self.init_time is None:
             self.init_time = time.time() * 1000
             interval = 0
             with open(self.log_file_path, "w") as log_file:
-                log_file.write("") 
+                log_file.write("")
         else:
             current_time = time.time() * 1000
             interval = current_time - self.init_time
@@ -24,13 +25,20 @@ class SenderLogger:
 
     def log_statatics(self, control_block):
         with open(self.log_file_path, "a") as log_file:
-            log_file.write(f"Original data sent: {control_block.original_data_sent}\n")
-            log_file.write(f"Original data acked: {control_block.original_data_acked}\n")
-            log_file.write(f"Original segments sent: {control_block.original_segments_sent}\n")
-            log_file.write(f"Retransmitted segments: {control_block.retransmitted_segments}\n")
-            log_file.write(f"Dup acks received: {control_block.dup_acks_received}\n")
-            log_file.write(f"Data segments dropped: {control_block.data_segments_dropped}\n")
-            log_file.write(f"Ack segments dropped: {control_block.ack_segments_dropped}\n")
+            log_file.write(
+                f"Original data sent: {control_block.original_data_sent}\n")
+            log_file.write(
+                f"Original data acked: {control_block.original_data_acked}\n")
+            log_file.write(
+                f"Original segments sent: {control_block.original_segments_sent}\n")
+            log_file.write(
+                f"Retransmitted segments: {control_block.retransmitted_segments}\n")
+            log_file.write(
+                f"Dup acks received: {control_block.dup_acks_received}\n")
+            log_file.write(
+                f"Data segments dropped: {control_block.data_segments_dropped}\n")
+            log_file.write(
+                f"Ack segments dropped: {control_block.ack_segments_dropped}\n")
 
     def write_log(self, log_entry):
         with open(self.log_file_path, "a") as log_file:
@@ -49,9 +57,10 @@ class ConnectionManager:
 
     def setup(self):
         # Send SYN and wait for ACK to establish connection
-        syn_segment = STPSegment(SYN, self.control_block.isn)
+        syn_segment = STPSegment(SYN, self.control_block.init_seqno)
         self.send_message(syn_segment)
-        self.wait_for_ack(self.control_block.isn + 1, "ESTABLISHED", syn_segment)
+        self.wait_for_ack(self.control_block.init_seqno +
+                          1, "ESTABLISHED", syn_segment)
 
     def wait_for_ack(self, expected_seqno, next_state, message_to_retransmit):
         # Wait for ACK with a specific sequence number to transition to the next state
@@ -77,10 +86,10 @@ class ConnectionManager:
                 self.control_block.original_data_sent += num_bytes
                 self.control_block.original_segments_sent += 1
 
-
             self.logger.log("drp", segment.type, segment.seqno, num_bytes)
         else:
-            self.sender_socket.sendto(segment.serialize(), self.receiver_address)
+            self.sender_socket.sendto(
+                segment.serialize(), self.receiver_address)
             self.logger.log("snd", segment.type, segment.seqno, num_bytes)
 
             if segment.type == DATA:
@@ -89,13 +98,14 @@ class ConnectionManager:
                 else:
                     self.control_block.original_data_sent += num_bytes
                     self.control_block.original_segments_sent += 1
-            self.sender_socket.sendto(segment.serialize(), self.receiver_address)
+            self.sender_socket.sendto(
+                segment.serialize(), self.receiver_address)
 
     def receive_message(self):
         # Logic to receive a segment
         response, _ = self.sender_socket.recvfrom(1024)
         segment = STPSegment.unserialize(response)
-    
+
         if random.random() < self.rlp:
             self.control_block.ack_segments_dropped += 1
             self.logger.log("drp", segment.type, segment.seqno)
@@ -111,3 +121,36 @@ class ConnectionManager:
         self.wait_for_ack(self.control_block.seqno + 1, "CLOSED", fin_segment)
         self.sender_socket.close()
         self.logger.log_statatics(self.control_block)
+
+
+class DataTransmissionManager:
+    def __init__(self, control_block, connection_manager, data):
+        self.control_block = control_block
+        self.connection_manager = connection_manager
+        self.data = data
+
+    def send_data(self):
+        total_length = len(self.data)
+        sent_length = 0
+
+        while sent_length < total_length or self.control_block.sliding_window:
+            with self.control_block.lock:
+                window_space = self.control_block.max_win - \
+                    (len(self.control_block.sliding_window) * 1000)
+
+            if window_space > 0 and sent_length < total_length:
+                # 确定本次发送的数据大小
+                segment_size = min(1000, total_length -
+                                   sent_length, window_space)
+                segment_data = self.data[sent_length:sent_length+segment_size]
+                new_segment = STPSegment(
+                    DATA, self.control_block.seqno, segment_data)
+                self.connection_manager.send_message(new_segment)
+                with self.control_block.lock:
+                    if not self.control_block.sliding_window:
+                        self.control_block.timer = time.time() * 1000 + self.control_block.rto
+                    self.control_block.sliding_window.append(new_segment)
+                    self.control_block.seqno = (
+                        self.control_block.seqno + segment_size) % (2 ** 16 - 1)
+
+                sent_length += segment_size

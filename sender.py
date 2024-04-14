@@ -3,8 +3,8 @@ import random
 import sys
 import time
 import threading
-from STPSegment import STPSegment, DATA
-from sender_utils import SenderLogger, ConnectionManager
+from sender_utils import SenderLogger, ConnectionManager, DataTransmissionManager
+
 
 class STPControlBlock:
     def __init__(self):
@@ -104,40 +104,6 @@ def timer_thread(control_block):
                         control_block.ack_counter = {}
 
 
-def send_file(filename, control_block):
-    with open(filename, 'rb') as file:
-        file_data = file.read()
-        total_length = len(file_data)
-        sent_length = 0
-
-        # 数据发送循环
-        while sent_length < total_length or control_block.sliding_window:
-            with control_block.lock:
-                window_space = control_block.max_win - \
-                    (len(control_block.sliding_window) * 1000)
-
-            # 确定是否有窗口空间发送更多数据
-            if window_space > 0 and sent_length < total_length:
-                # 确定本次发送的数据大小
-                segment_size = min(1000, total_length -
-                                   sent_length, window_space)
-                segment_data = file_data[sent_length:sent_length+segment_size]
-                new_segment = STPSegment(
-                    DATA, control_block.seqno, segment_data)
-                connection_manager.send_message(new_segment)
-                with control_block.lock:
-                    # 更新控制块信息
-                    if not control_block.sliding_window:
-                        control_block.timer = time.time() * 1000 + control_block.rto  # 如果是第一个未确认的段，设置计时器
-                    control_block.sliding_window.append(new_segment)
-                    control_block.seqno = (
-                        control_block.seqno + segment_size) % (2 ** 16 - 1)
-
-                sent_length += segment_size
-
-        control_block.state = "FIN_WAIT"
-
-
 if __name__ == '__main__':
     if len(sys.argv) != 8:
         print("Usage: python3 sender.py sender_port receiver_port txt_file_to_send max_win rto flp rlp")
@@ -171,7 +137,11 @@ if __name__ == '__main__':
     ack_thread.start()
     timer_thread.start()
 
-    send_file(txt_file_to_send, control_block)
+    with open(txt_file_to_send, 'rb') as file:
+        data = file.read()
+        DataTransmissionManager(control_block, connection_manager, data)
+        control_block.state = "FIN_WAIT"
+
     ack_thread.join()
     timer_thread.join()
     connection_manager.finish()
