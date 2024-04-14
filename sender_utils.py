@@ -67,8 +67,8 @@ class ConnectionManager:
         self.sender_socket.settimeout(self.rto / 1000.0)
         while True:
             try:
-                ack_segment = self.receive_message()
-                if ack_segment.type == ACK and ack_segment.seqno == expected_seqno:
+                ackseg = self.receive_message()
+                if ackseg.type == ACK and ackseg.seqno == expected_seqno:
                     self.ctrlblo.state = next_state
                     break
             except socket.timeout:
@@ -130,11 +130,11 @@ class DataTransmissionManager:
             total_length = len(self.data)
             sent_length = 0
 
-            while sent_length < total_length:
+            while sent_length < total_length or self.ctrlblo.sliding_window:
                 with self.ctrlblo.lock:
                     window_space = self.calculate_window_space()
 
-                    if window_space > 0:
+                    if window_space > 0 and sent_length < total_length:
                         segment_size, segment_data = self.segment_data(
                             sent_length, total_length, window_space)
                         self.send_segment_data(segment_data, segment_size)
@@ -173,27 +173,27 @@ class AckReceiver:
                 break
 
             try:
-                ack_segment = self.connection_manager.receive_message()
-                self.process_ack_segment(ack_segment)
+                ackseg = self.connection_manager.receive_message()
+                self.process_ackseg(ackseg)
             except socket.timeout:
                 continue
             except AttributeError:
                 continue
 
-    def process_ack_segment(self, ack_segment):
+    def process_ackseg(self, ackseg):
         with self.ctrlblo.lock:
-            if self.is_new_ack(ack_segment):
-                self.update_ctrlblo_for_new_ack(ack_segment)
+            if self.is_new_ack(ackseg):
+                self.update_ctrlblo_for_new_ack(ackseg)
             else:
-                self.handle_duplicate_ack(ack_segment)
+                self.handle_duplicate_ack(ackseg)
 
-    def is_new_ack(self, ack_segment):
-        return ack_segment.seqno in [(seg.seqno + len(seg.data)) % 2 ** 16 for seg in self.ctrlblo.sliding_window]
+    def is_new_ack(self, ackseg):
+        return ackseg.seqno in [(seg.seqno + len(seg.data)) % 2 ** 16 for seg in self.ctrlblo.sliding_window]
 
-    def update_ctrlblo_for_new_ack(self, ack_segment):
+    def update_ctrlblo_for_new_ack(self, ackseg):
         # Update original data acked and sliding window
         index_ack_seg = [index for index, seg in enumerate(
-            self.ctrlblo.sliding_window) if (seg.seqno + len(seg.data)) % 2 ** 16 == ack_segment.seqno][0]
+            self.ctrlblo.sliding_window) if (seg.seqno + len(seg.data)) % 2 ** 16 == ackseg.seqno][0]
         for seg in self.ctrlblo.sliding_window[:index_ack_seg + 1]:
             self.ctrlblo.original_data_acked += len(seg.data)
 
@@ -203,11 +203,11 @@ class AckReceiver:
             self.ctrlblo.rto if self.ctrlblo.sliding_window else None
         self.ctrlblo.ack_counter = {}
 
-    def handle_duplicate_ack(self, ack_segment):
+    def handle_duplicate_ack(self, ackseg):
         self.ctrlblo.dup_acks_received += 1
-        self.ctrlblo.ack_counter[ack_segment.seqno] = self.ctrlblo.ack_counter.get(
-            ack_segment.seqno, 0) + 1
-        if self.ctrlblo.ack_counter[ack_segment.seqno] == 3:
+        self.ctrlblo.ack_counter[ackseg.seqno] = self.ctrlblo.ack_counter.get(
+            ackseg.seqno, 0) + 1
+        if self.ctrlblo.ack_counter[ackseg.seqno] == 3:
             self.fast_retransmit()
 
     def fast_retransmit(self):
@@ -237,8 +237,8 @@ class TimerManager:
 
     def handle_timeout(self):
         if self.ctrlblo.sliding_window:
-            oldest_unack_segment = self.ctrlblo.sliding_window[0]
-            self.retransmit_segment(oldest_unack_segment)
+            oldest_unackseg = self.ctrlblo.sliding_window[0]
+            self.retransmit_segment(oldest_unackseg)
             # Reset the timer for the next timeout check
             self.ctrlblo.timer = time.time() * 1000 + self.ctrlblo.rto
             # Reset the ACK counter since we're performing a retransmission

@@ -52,9 +52,14 @@ class WindowManager:
 
             elif segment.seqno > self.receiver.next_seqno:  # Out-of-order segment
                 if segment.seqno not in self.win:
+                    self.original_segments_received += 1
+                    self.original_data_received += len(segment.data)
                     self.win[segment.seqno] = segment.data
                 else:
                     self.dup_data_segments_received += 1
+
+            else:
+                self.dup_data_segments_received += 1
 
     def update_next_seqno(self, data_length):
         self.receiver.next_seqno = (self.receiver.next_seqno + data_length) % (2 ** 16)
