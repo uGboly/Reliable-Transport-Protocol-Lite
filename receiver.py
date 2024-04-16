@@ -8,8 +8,8 @@ class STPReceiver:
     def __init__(self, receiver_port, file_to_save):
         self.receiver_port = receiver_port
         self.file_to_save = file_to_save
-        self.syn_seqno = 0
-        self.waited_seqno = 0
+        self.syn_seqno = None
+        self.waited_seqno = None
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('', receiver_port))
         self.logger = ActionLogger()
@@ -107,9 +107,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     receiver_port = int(sys.argv[1])
-    sender_port = int(sys.argv[2])
     txt_file_received = sys.argv[3]
-    max_win = int(sys.argv[4])
 
     stp_receiver = STPReceiver(receiver_port, txt_file_received)
     stp_receiver.rcv_syn()

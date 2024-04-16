@@ -9,22 +9,40 @@ class ActionLogger:
         self.original_segments_received = 0
         self.dup_data_segments_received = 0
         self.total_ack_segments_sent = 0
-        with open("receiver_log.txt", "w"):
+        self.log_file_path = "receiver_log.txt"
+        # Clear or create the log file at initialization
+        with open(self.log_file_path, "w"):
             pass
 
-    def action_logging(self, action, type, seqno, len_data=0):
-        time_now = time.time() * 1000
-        type_name = {0: "DATA", 1: "ACK",
-                     2: "SYN", 3: "FIN"}.get(type, "UNKNOWN")
+    def action_logging(self, action, event_type, seq_no, data_length=0):
+        current_time_millis = self._get_current_time_millis()
+        event_name = self._get_event_name(event_type)
+        time_stamp = self._calculate_time_stamp(current_time_millis)
+
+        log_entry = f"{action}\t{time_stamp:.2f}\t{event_name}\t{seq_no}\t{data_length}\n"
+        self._append_to_log(log_entry)
+
+    def _get_current_time_millis(self):
+        """Returns the current time in milliseconds."""
+        return time.time() * 1000
+
+    def _get_event_name(self, event_type):
+        """Translates an event type into a readable event name."""
+        return {0: "DATA", 1: "ACK", 2: "SYN", 3: "FIN"}.get(event_type, "UNKNOWN")
+
+    def _calculate_time_stamp(self, current_time_millis):
+        """Calculates the time stamp since logging started, or initializes logging."""
         if not self.started:
-            self.time_base = time_now
+            self.time_base = current_time_millis
             self.started = True
-            time_stamp = 0
+            return 0  # Initial event timestamp
         else:
-            time_stamp = time_now - self.time_base
-        with open("receiver_log.txt", "a") as receiver_log:
-            receiver_log.write(
-                f"{action}\t{time_stamp:.2f}\t{type_name}\t{seqno}\t{len_data}\n")
+            return current_time_millis - self.time_base  # Subsequent event timestamps
+
+    def _append_to_log(self, log_entry):
+        """Appends the given log entry to the log file."""
+        with open(self.log_file_path, "a") as log_file:
+            log_file.write(log_entry)
 
     def summary(self):
         with open("receiver_log.txt", "a") as receiver_log:
