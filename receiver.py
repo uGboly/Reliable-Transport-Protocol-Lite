@@ -5,22 +5,18 @@ from receiver_components.segment_handler import snd_ack, rcv_seg
 from utils import calc_new_seqno, calc_rcv_syn_fin_seqno
 
 class STPReceiver:
-    def __init__(self, receiver_port, sender_port, file_to_save):
+    def __init__(self, receiver_port, file_to_save):
         self.receiver_port = receiver_port
-        self.sender_port = sender_port
         self.file_to_save = file_to_save
         self.syn_seqno = 0
         self.waited_seqno = 0
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('', receiver_port))
         self.logger = ActionLogger()
+        self.unordered_seg = {}
         self.sock.settimeout(2.0)
 
-    def start(self):
-        self.handle_syn()
-        self.receive_data()
-
-    def handle_syn(self):
+    def rcv_syn(self):
         while True:
             try:
                 type, seqno, _, orig = rcv_seg(self)
@@ -32,8 +28,7 @@ class STPReceiver:
             except socket.timeout:
                 continue
 
-    def receive_data(self):
-        buffer = {}
+    def rcv_dat(self):
         with open(self.file_to_save, 'wb') as file:
             while True:
                 try:
@@ -49,30 +44,30 @@ class STPReceiver:
                             file.write(data)
                             self.waited_seqno = calc_new_seqno(self.waited_seqno, data)
 
-                            while self.waited_seqno in buffer:
-                                data = buffer.pop(self.waited_seqno)
+                            while self.waited_seqno in self.unordered_seg:
+                                data = self.unordered_seg.pop(self.waited_seqno)
                                 file.write(data)
                                 self.waited_seqno = calc_new_seqno(self.waited_seqno, data)
                         elif seqno > self.waited_seqno:
-                            if seqno in buffer:
+                            if seqno in self.unordered_seg:
                                 self.logger.dup_data_segments_received += 1
                             else:
                                 self.logger.original_data_received += len(data)
                                 self.logger.original_segments_received += 1
-                                buffer[seqno] = data
+                                self.unordered_seg[seqno] = data
                         else:
                             self.logger.dup_data_segments_received += 1
 
                         snd_ack(self, orig)
 
                     if type == 3:
+                        self.waited_seqno = calc_rcv_syn_fin_seqno(self.waited_seqno)
                         self.handle_fin(orig)
                         break
                 except socket.timeout:
                     continue
 
     def handle_fin(self, orig):
-        self.waited_seqno = calc_rcv_syn_fin_seqno(self.waited_seqno)
         snd_ack(self, orig)
 
         try:
@@ -82,9 +77,6 @@ class STPReceiver:
                     snd_ack(self, orig)
         except socket.timeout:
             pass
-
-        self.logger.summary()
-
 
 if __name__ == '__main__':
     if len(sys.argv) != 5:
@@ -97,6 +89,7 @@ if __name__ == '__main__':
     txt_file_received = sys.argv[3]
     max_win = int(sys.argv[4])
 
-    receiver = STPReceiver(receiver_port, sender_port,
-                           txt_file_received)
-    receiver.start()
+    stp_receiver = STPReceiver(receiver_port, txt_file_received)
+    stp_receiver.rcv_syn()
+    stp_receiver.rcv_dat()
+    stp_receiver.logger.summary()
