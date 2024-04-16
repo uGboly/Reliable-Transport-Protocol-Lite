@@ -131,33 +131,46 @@ class STPSender:
 
 
     def send_file(self, filename):
+        file_data, total_length = self._read_file_data(filename)
+        sent_length = 0
+
+        while self._should_continue_sending(sent_length, total_length):
+            with self.lock:
+                window_space = self._calculate_window_space()
+                if self._can_send_segment(window_space, sent_length, total_length):
+                    segment_size, segment_data = self._prepare_segment(file_data, sent_length, window_space, total_length)
+                    self._send_segment(segment_data)
+                    self._update_sending_state(segment_data, segment_size)
+                    sent_length += segment_size
+
+    def _read_file_data(self, filename):
         with open(filename, 'rb') as file:
             file_data = file.read()
-            total_length = len(file_data)
-            sent_length = 0
+        return file_data, len(file_data)
 
-            while sent_length < total_length or self.buffered_seg:
-                with self.lock:
-                    window_space = self.parameters['max_win'] - \
-                        (len(self.buffered_seg) * 1000)
+    def _should_continue_sending(self, sent_length, total_length):
+        return sent_length < total_length or self.buffered_seg
 
-                    if window_space > 0 and sent_length < total_length:
+    def _calculate_window_space(self):
+        return self.parameters['max_win'] - (len(self.buffered_seg) * 1000)
 
-                        segment_size = min(1000, total_length -
-                                           sent_length, window_space)
-                        segment_data = file_data[sent_length:sent_length+segment_size]
+    def _can_send_segment(self, window_space, sent_length, total_length):
+        return window_space > 0 and sent_length < total_length
 
-                        snd_seg(self, 0,
-                                self.seqno, segment_data)
+    def _prepare_segment(self, file_data, sent_length, window_space, total_length):
+        segment_size = min(1000, total_length - sent_length, window_space)
+        segment_data = file_data[sent_length:sent_length + segment_size]
+        return segment_size, segment_data
 
-                        if not self.buffered_seg:
-                            self.stp_timer = time.time() * 1000 + \
-                                self.parameters['rto']
-                        self.buffered_seg.append(
-                            [self.seqno, segment_data])
-                        self.seqno = calc_new_seqno(self.seqno, segment_data)
+    def _send_segment(self, segment_data):
+        snd_seg(self, 0, self.seqno, segment_data)
+        if not self.buffered_seg:
+            self.stp_timer = time.time() * 1000 + self.parameters['rto']
 
-                        sent_length += segment_size
+    def _update_sending_state(self, segment_data, segment_size):
+        self.buffered_seg.append([self.seqno, segment_data])
+        self.seqno = calc_new_seqno(self.seqno, segment_data)
+
 
     def send_fin(self):
         while True:
