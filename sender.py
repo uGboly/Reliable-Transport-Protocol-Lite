@@ -3,7 +3,6 @@ import random
 import sys
 import time
 import threading
-from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 from sender_components.segment_handler import send_segment, receive_segment
 
 
@@ -16,11 +15,13 @@ class STPControlBlock:
         self.window_size = max_win
         self.rto = rto
         self.parameters = dict(rto=rto, flp=flp, rlp=rlp)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('', sender_port))
+        self.dest = ('localhost', receiver_port)
         self.unack_segments = []
         self.timer = None
         self.dup_ack_count = {}
         self.start_time = 0
-        self.fin_segment = None
         self.original_data_sent = 0
         self.original_data_acked = 0
         self.original_segments_sent = 0
@@ -30,49 +31,42 @@ class STPControlBlock:
         self.ack_segments_dropped = 0
 
 
-def establish_connection(sender_socket, receiver_address, control_block):
+def establish_connection(control_block):
 
-    syn_segment = STPSegment(SEGMENT_TYPE_SYN, control_block.isn)
-    send_segment(sender_socket, receiver_address, syn_segment, control_block)
+    send_segment(control_block, 2, control_block.isn)
 
-    sender_socket.settimeout(control_block.rto / 1000.0)
+    control_block.sock.settimeout(control_block.rto / 1000.0)
 
     while True:
         try:
-            ack_segment = receive_segment(sender_socket, control_block)
+            ack_seqno = receive_segment(control_block)
 
-            if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
+            if ack_seqno == control_block.isn + 1:
                 control_block.state = "ESTABLISHED"
                 break
         except socket.timeout:
-            send_segment(sender_socket, receiver_address,
-                         syn_segment, control_block)
+            send_segment(control_block, 2, control_block.isn)
         except AttributeError:
             continue
 
 
-def ack_receiver(control_block, sender_socket):
+def ack_receiver(control_block):
     while True:
 
         try:
-            ack_segment = receive_segment(sender_socket, control_block)
-
-            if ack_segment.segment_type != SEGMENT_TYPE_ACK:
-                continue
+            ack_seqno = receive_segment(control_block)
 
             with control_block.lock:
-                if control_block.state == "FIN_WAIT" and ack_segment.seqno == control_block.seqno + 1:
-
-                    control_block.fin_segment = None
+                if control_block.state == "FIN_WAIT" and ack_seqno == control_block.seqno + 1:
                     control_block.state = "CLOSE"
                     break
 
-                elif ack_segment.seqno in [(seg.seqno + len(seg.data)) % 2 ** 16 for seg in control_block.unack_segments]:
+                elif ack_seqno in [(seg[0] + len(seg[1])) % 2 ** 16 for seg in control_block.unack_segments]:
 
                     index_ack_seg = [i for i, seg in enumerate(
-                        control_block.unack_segments) if (seg.seqno + len(seg.data)) % 2 ** 16 == ack_segment.seqno][0]
+                        control_block.unack_segments) if (seg[0] + len(seg[1])) % 2 ** 16 == ack_seqno][0]
                     for seg in control_block.unack_segments[:index_ack_seg + 1]:
-                        control_block.original_data_acked += len(seg.data)
+                        control_block.original_data_acked += len(seg[1])
 
                     control_block.unack_segments = control_block.unack_segments[index_ack_seg + 1:]
 
@@ -86,14 +80,15 @@ def ack_receiver(control_block, sender_socket):
                 else:
 
                     control_block.dup_acks_received += 1
-                    if ack_segment.seqno in control_block.dup_ack_count:
-                        control_block.dup_ack_count[ack_segment.seqno] += 1
+                    if ack_seqno in control_block.dup_ack_count:
+                        control_block.dup_ack_count[ack_seqno] += 1
                     else:
-                        control_block.dup_ack_count[ack_segment.seqno] = 1
+                        control_block.dup_ack_count[ack_seqno] = 1
 
-                    if control_block.dup_ack_count[ack_segment.seqno] == 3:
-                        send_segment(sender_socket, receiver_address,
-                                     control_block.unack_segments[0], control_block, True)
+                    if control_block.dup_ack_count[ack_seqno] == 3:
+                        oldest_unack_segment = control_block.unack_segments[0]
+                        send_segment(
+                            control_block, 0, oldest_unack_segment[0], oldest_unack_segment[1], True)
 
                         control_block.timer = time.time() * 1000 + control_block.rto
 
@@ -103,7 +98,7 @@ def ack_receiver(control_block, sender_socket):
             continue
 
 
-def timer_thread(control_block, sender_socket):
+def timer_thread(control_block):
     while True:
         with control_block.lock:
             if control_block.state == "CLOSE":
@@ -115,20 +110,20 @@ def timer_thread(control_block, sender_socket):
 
                     if control_block.unack_segments:
                         oldest_unack_segment = control_block.unack_segments[0]
-                        send_segment(sender_socket, receiver_address,
-                                     oldest_unack_segment, control_block, True)
+                        send_segment(
+                            control_block, 0, oldest_unack_segment[0], oldest_unack_segment[1], True)
 
                         control_block.timer = current_time + control_block.rto
 
                         control_block.dup_ack_count = {}
-                    elif control_block.state == "FIN_WAIT" and control_block.fin_segment:
+                    elif control_block.state == "FIN_WAIT":
 
-                        send_segment(sender_socket, receiver_address,
-                                     control_block.fin_segment, control_block, True)
+                        send_segment(control_block, 3,
+                                     control_block.seqno, b'', True)
                         control_block.timer = current_time + control_block.rto
 
 
-def send_file(filename, control_block, sender_socket):
+def send_file(filename, control_block):
     with open(filename, 'rb') as file:
         file_data = file.read()
         total_length = len(file_data)
@@ -144,31 +139,29 @@ def send_file(filename, control_block, sender_socket):
                     segment_size = min(1000, total_length -
                                        sent_length, window_space)
                     segment_data = file_data[sent_length:sent_length+segment_size]
-                    new_segment = STPSegment(
-                        SEGMENT_TYPE_DATA, control_block.seqno, segment_data)
-                    send_segment(sender_socket, receiver_address,
-                                 new_segment, control_block)
+
+                    send_segment(control_block, 0,
+                                 control_block.seqno, segment_data)
 
                     if not control_block.unack_segments:
                         control_block.timer = time.time() * 1000 + control_block.rto
-                    control_block.unack_segments.append(new_segment)
+                    control_block.unack_segments.append(
+                        [control_block.seqno, segment_data])
                     control_block.seqno = (
                         control_block.seqno + segment_size) % (2 ** 16)
 
                     sent_length += segment_size
 
 
-def close_connection(sender_socket, receiver_address, control_block):
+def close_connection(control_block):
     while True:
         with control_block.lock:
             if not control_block.unack_segments:
 
-                fin_segment = STPSegment(SEGMENT_TYPE_FIN, control_block.seqno)
-                control_block.fin_segment = fin_segment
-                send_segment(sender_socket, receiver_address,
-                             fin_segment, control_block)
-                control_block.timer = time.time() * 1000 + control_block.rto
                 control_block.state = "FIN_WAIT"
+
+                send_segment(control_block, 3, control_block.seqno)
+                control_block.timer = time.time() * 1000 + control_block.rto
                 break
 
 
@@ -209,31 +202,28 @@ if __name__ == '__main__':
     random.seed()
 
     control_block = STPControlBlock()
-    sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sender_socket.bind(('', sender_port))
-    receiver_address = ('localhost', receiver_port)
 
-    establish_connection(sender_socket, receiver_address, control_block)
+    establish_connection(control_block)
 
     if control_block.state != "ESTABLISHED":
         print("Failed to establish connection.")
         sys.exit(1)
 
     ack_thread = threading.Thread(
-        target=ack_receiver, args=(control_block, sender_socket))
+        target=ack_receiver, args=[control_block])
     timer_thread = threading.Thread(
-        target=timer_thread, args=(control_block, sender_socket))
+        target=timer_thread, args=[control_block])
     ack_thread.start()
     timer_thread.start()
 
-    send_file(txt_file_to_send, control_block, sender_socket)
+    send_file(txt_file_to_send, control_block)
 
-    close_connection(sender_socket, receiver_address, control_block)
+    close_connection(control_block)
 
     ack_thread.join()
     timer_thread.join()
 
-    sender_socket.close()
+    control_block.sock.close()
 
     with control_block.lock:
         finalize_log(control_block)
