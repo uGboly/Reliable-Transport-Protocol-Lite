@@ -47,18 +47,20 @@ class ActionLogger:
             log_file.write(log_entry)
 
     def summary(self):
+        summary_content = [
+            ("Original data sent", self.original_data_sent),
+            ("Original data acked", self.original_data_acked),
+            ("Original segments sent", self.original_segments_sent),
+            ("Retransmitted segments sent", self.data_segments_dropped + self.ack_segments_dropped),
+            ("Dup acks received", self.dup_acks_received),
+            ("Data segments dropped", self.data_segments_dropped),
+            ("Ack segments dropped", self.ack_segments_dropped),
+        ]
+
+        # Open the log file once and write all summary lines
         with open("sender_log.txt", "a") as sender_log:
-            sender_log.write(
-                f"Original data sent:          \t{self.original_data_sent}\n")
-            sender_log.write(
-                f"Original data acked:         \t{self.original_data_acked}\n")
-            sender_log.write(
-                f"Original segments sent:      \t{self.original_segments_sent}\n")
-            sender_log.write(
-                f"Retransmitted segments sent: \t{self.data_segments_dropped + self.ack_segments_dropped}\n")
-            sender_log.write(
-                f"Dup acks received:           \t{self.dup_acks_received}\n")
-            sender_log.write(
-                f"Data segments dropped:       \t{self.data_segments_dropped}\n")
-            sender_log.write(
-                f"Ack segments dropped:        \t{self.ack_segments_dropped}\n")
+            for description, value in summary_content:
+                if description == "Ack segments dropped":
+                    sender_log.write(f"{description}: \t{value}")
+                else:
+                    sender_log.write(f"{description}: \t{value}\n")

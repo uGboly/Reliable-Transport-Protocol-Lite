@@ -45,12 +45,18 @@ class ActionLogger:
             log_file.write(log_entry)
 
     def summary(self):
+        summary_content = [
+            ("Original data received", self.original_data_received),
+            ("Original segments received", self.original_segments_received),
+            ("Dup data segments received", self.dup_data_segments_received),
+            # Calculate the "Dup ack segments sent" value as part of the structure
+            ("Dup ack segments sent", self.total_ack_segments_sent - self.original_segments_received - 2),
+        ]
+
+        # Open the log file once and write all the summary content
         with open("receiver_log.txt", "a") as receiver_log:
-            receiver_log.write(
-                f"Original data received:     \t{self.original_data_received}\n")
-            receiver_log.write(
-                f"Original segments received: \t{self.original_segments_received}\n")
-            receiver_log.write(
-                f"Dup data segments received: \t{self.dup_data_segments_received}\n")
-            receiver_log.write(
-                f"Dup ack segments sent:      \t{self.total_ack_segments_sent - self.original_segments_received - 2}")
+            for description, value in summary_content:
+                if description == "Dup ack segments sent":
+                    receiver_log.write(f"{description}: \t{value}")
+                else:
+                    receiver_log.write(f"{description}: \t{value}\n")
