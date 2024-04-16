@@ -1,60 +1,33 @@
 import socket
 import sys
-import threading
-import time
-from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
-
+from receiver_components.logger import ActionLogger
+from receiver_components.segment_handler import snd_ack, rcv_seg
+from utils import calc_new_seqno, calc_rcv_syn_fin_seqno
 
 class STPReceiver:
-    def __init__(self, receiver_port, sender_port, file_to_save, max_win):
+    def __init__(self, receiver_port, sender_port, file_to_save):
         self.receiver_port = receiver_port
         self.sender_port = sender_port
         self.file_to_save = file_to_save
-        self.max_win = max_win
-        self.isn = 0
-        self.expected_seqno = 0
-        self.receiver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.receiver_socket.bind(('', receiver_port))
-        self.original_data_received = 0
-        self.original_segments_received = 0
-        self.dup_data_segments_received = 0
-        self.total_ack_segments_sent = 0
-        self.receiver_socket.settimeout(2.0)
+        self.syn_seqno = 0
+        self.waited_seqno = 0
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('', receiver_port))
+        self.logger = ActionLogger()
+        self.sock.settimeout(2.0)
 
     def start(self):
         self.handle_syn()
         self.receive_data()
 
-    def log_event(self, action, segment, num_bytes):
-        current_time = time.time() * 1000
-        segment_type_str = {SEGMENT_TYPE_DATA: "DATA", SEGMENT_TYPE_ACK: "ACK",
-                            SEGMENT_TYPE_SYN: "SYN", SEGMENT_TYPE_FIN: "FIN"}.get(segment.segment_type, "UNKNOWN")
-        if segment_type_str == "SYN":
-            self.start_time = current_time
-            time_offset = 0
-        else:
-            time_offset = current_time - self.start_time
-
-        with open("receiver_log.txt", "a") as log_file:
-            log_file.write(
-                f"{action} {time_offset:.2f} {segment_type_str} {segment.seqno} {num_bytes}\n")
-
     def handle_syn(self):
-
         while True:
             try:
-                packet, sender_address = self.receiver_socket.recvfrom(1024)
-                segment = STPSegment.unpack(packet)
-                if segment.segment_type == SEGMENT_TYPE_SYN:
-                    self.log_event("rcv", segment, 0)
-                    self.expected_seqno = (segment.seqno + 1) % (2 ** 16)
-                    self.isn = (segment.seqno + 1) % (2 ** 16)
-                    ack_segment = STPSegment(
-                        SEGMENT_TYPE_ACK, self.expected_seqno)
-                    self.receiver_socket.sendto(
-                        ack_segment.pack(), sender_address)
-                    self.total_ack_segments_sent += 1
-                    self.log_event("snd", ack_segment, 0)
+                type, seqno, _, orig = rcv_seg(self)
+                if type == 2:
+                    self.syn_seqno = calc_rcv_syn_fin_seqno(seqno)
+                    self.waited_seqno = calc_rcv_syn_fin_seqno(seqno)
+                    snd_ack(self, orig)
                     break
             except socket.timeout:
                 continue
@@ -64,98 +37,54 @@ class STPReceiver:
         with open(self.file_to_save, 'wb') as file:
             while True:
                 try:
-                    packet, sender_address = self.receiver_socket.recvfrom(
-                        1024)
-                    segment = STPSegment.unpack(packet)
+                    type, seqno, data, orig = rcv_seg(self)
 
-                    if segment.segment_type == SEGMENT_TYPE_SYN:
-                        self.log_event("rcv", segment, 0)
-                        ack_segment = STPSegment(
-                            SEGMENT_TYPE_ACK, self.isn)
-                        self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
-                        self.total_ack_segments_sent += 1
-                        self.log_event("snd", ack_segment, 0)
+                    if type == 2:
+                        snd_ack(self, orig)
 
-                    if segment.segment_type == SEGMENT_TYPE_DATA:
-                        self.log_event("rcv", segment, len(segment.data))
+                    if type == 0:
+                        if seqno == self.waited_seqno:
+                            self.logger.original_data_received += len(data)
+                            self.logger.original_segments_received += 1
+                            file.write(data)
+                            self.waited_seqno = calc_new_seqno(self.waited_seqno, data)
 
-                        if segment.seqno == self.expected_seqno:
-                            self.original_data_received += len(segment.data)
-                            self.original_segments_received += 1
-                            file.write(segment.data)
-                            self.expected_seqno = (
-                                self.expected_seqno + len(segment.data)) % (2 ** 16)
-
-                            while self.expected_seqno in buffer:
-                                data = buffer.pop(self.expected_seqno)
+                            while self.waited_seqno in buffer:
+                                data = buffer.pop(self.waited_seqno)
                                 file.write(data)
-                                self.expected_seqno = (
-                                    self.expected_seqno + len(data)) % (2 ** 16)
-                        elif segment.seqno > self.expected_seqno:
-                            if segment.seqno in buffer:
-                                self.dup_data_segments_received += 1
+                                self.waited_seqno = calc_new_seqno(self.waited_seqno, data)
+                        elif seqno > self.waited_seqno:
+                            if seqno in buffer:
+                                self.logger.dup_data_segments_received += 1
                             else:
-                                self.original_data_received += len(
-                                    segment.data)
-                                self.original_segments_received += 1
-                                buffer[segment.seqno] = segment.data
+                                self.logger.original_data_received += len(data)
+                                self.logger.original_segments_received += 1
+                                buffer[seqno] = data
                         else:
-                            self.dup_data_segments_received += 1
+                            self.logger.dup_data_segments_received += 1
 
-                        self.total_ack_segments_sent += 1
-                        ack_segment = STPSegment(
-                            SEGMENT_TYPE_ACK, self.expected_seqno)
-                        self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
-                        self.log_event("snd", ack_segment, 0)
+                        self.logger.total_ack_segments_sent += 1
+                        snd_ack(self, orig)
 
-                    if segment.segment_type == SEGMENT_TYPE_FIN:
-                        self.log_event("rcv", segment, 0)
-                        self.handle_fin(sender_address)
+                    if type == 3:
+                        self.handle_fin(orig)
                         break
                 except socket.timeout:
                     continue
 
-    def handle_fin(self, sender_address):
+    def handle_fin(self, orig):
+        self.waited_seqno = calc_rcv_syn_fin_seqno(self.waited_seqno)
+        snd_ack(self, orig)
 
-        ack_segment = STPSegment(
-            SEGMENT_TYPE_ACK, (self.expected_seqno + 1) % (2 ** 16))
-        self.receiver_socket.sendto(ack_segment.pack(), sender_address)
-        self.total_ack_segments_sent += 1
-        self.log_event("snd", ack_segment, 0)
+        try:
+            while True:
+                type, _ = rcv_seg(self)
+                if type == 3:
+                    snd_ack(self, orig)
+        except socket.timeout:
+            pass
 
-        def handle_fin_retransmissions():
-            try:
-                while True:
-                    packet, _ = self.receiver_socket.recvfrom(1024)
-                    segment = STPSegment.unpack(packet)
-
-                    if segment.segment_type == SEGMENT_TYPE_FIN:
-
-                        self.log_event("rcv", segment, 0)
-                        self.receiver_socket.sendto(
-                            ack_segment.pack(), sender_address)
-                        self.log_event("snd", ack_segment, 0)
-            except socket.timeout:
-
-                pass
-
-        fin_thread = threading.Thread(target=handle_fin_retransmissions)
-        fin_thread.start()
-        fin_thread.join()
-        self.finalize_log()
-
-    def finalize_log(self):
-        with open("receiver_log.txt", "a") as log_file:
-            log_file.write(
-                f"Original data received: {self.original_data_received}\n")
-            log_file.write(
-                f"Original segments received: {self.original_segments_received}\n")
-            log_file.write(
-                f"Dup data segments received: {self.dup_data_segments_received}\n")
-            log_file.write(
-                f"Dup ack segments sent: {self.total_ack_segments_sent - self.original_segments_received - 2}\n")
+        self.logger.summary()
 
 
 if __name__ == '__main__':
@@ -173,5 +102,5 @@ if __name__ == '__main__':
         pass
 
     receiver = STPReceiver(receiver_port, sender_port,
-                           txt_file_received, max_win)
+                           txt_file_received)
     receiver.start()
