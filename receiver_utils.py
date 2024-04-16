@@ -35,6 +35,8 @@ class WindowManager:
         self.original_data_received = 0
         self.original_segments_received = 0
         self.dup_data_segments_received = 0
+        with open(file_path, 'w'):
+            pass
 
     def handle_segment(self, segment):
         with open(self.file_path, 'ab') as file:
