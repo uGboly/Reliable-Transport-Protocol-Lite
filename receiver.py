@@ -63,7 +63,6 @@ class STPReceiver:
                         else:
                             self.logger.dup_data_segments_received += 1
 
-                        self.logger.total_ack_segments_sent += 1
                         snd_ack(self, orig)
 
                     if type == 3:
@@ -78,7 +77,7 @@ class STPReceiver:
 
         try:
             while True:
-                type, _ = rcv_seg(self)
+                type = rcv_seg(self)[0]
                 if type == 3:
                     snd_ack(self, orig)
         except socket.timeout:
@@ -97,9 +96,6 @@ if __name__ == '__main__':
     sender_port = int(sys.argv[2])
     txt_file_received = sys.argv[3]
     max_win = int(sys.argv[4])
-
-    with open("receiver_log.txt", "w") as log_file:
-        pass
 
     receiver = STPReceiver(receiver_port, sender_port,
                            txt_file_received)
