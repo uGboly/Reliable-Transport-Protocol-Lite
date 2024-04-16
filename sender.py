@@ -90,29 +90,45 @@ class STPSender:
         self.stp_timer = time.time() * 1000 + self.parameters['rto']
 
 
-    def timer_thread(self):
-        while True:
-            with self.lock:
-                if self.state == CLOSE:
-                    break
-                if self.stp_timer is not None:
-                    current_time = time.time() * 1000
-                    if current_time >= self.stp_timer:
+    def timer_watcher_thread(self):
+        while self._continue_timer_watcher_thread():
+            if self._timer_expired():
+                with self.lock:
+                    self._handle_timer_expiration()
 
-                        if self.buffered_seg:
-                            first_buffered_seg = self.buffered_seg[0]
-                            snd_seg(
-                                self, 0, first_buffered_seg[0], first_buffered_seg[1], True)
+    def _continue_timer_watcher_thread(self):
+        with self.lock:
+            return self.state != CLOSE
 
-                            self.stp_timer = current_time + \
-                                self.parameters['rto']
-                            self.ack_cnt = {}
+    def _timer_expired(self):
+        with self.lock:
+            if self.stp_timer is not None:
+                return time.time() * 1000 >= self.stp_timer
+            return False
 
-                        elif self.state == FIN_WAIT:
-                            snd_seg(self, 3,
-                                    self.seqno, b'', True)
-                            self.stp_timer = current_time + \
-                                self.parameters['rto']
+    def _handle_timer_expiration(self):
+        current_time = time.time() * 1000
+        if self.buffered_seg:
+            self._fast_retransmit_first_buffered_segment(current_time)
+        elif self.state == FIN_WAIT:
+            self._send_fin_wait_segment(current_time)
+
+    def _fast_retransmit_first_buffered_segment(self, current_time):
+        first_buffered_seg = self.buffered_seg[0]
+        snd_seg(self, 0, first_buffered_seg[0], first_buffered_seg[1], True)
+        self._reset_timer_and_ack_count(current_time)
+
+    def _send_fin_wait_segment(self, current_time):
+        snd_seg(self, 3, self.seqno, b'', True)
+        self._reset_timer(current_time)
+
+    def _reset_timer_and_ack_count(self, current_time):
+        self.stp_timer = current_time + self.parameters['rto']
+        self.ack_cnt = {}
+
+    def _reset_timer(self, current_time):
+        self.stp_timer = current_time + self.parameters['rto']
+
 
     def send_file(self, filename):
         with open(filename, 'rb') as file:
@@ -177,17 +193,17 @@ if __name__ == '__main__':
 
     ack_listener_thread = threading.Thread(
         target=stp_sender.ack_listener)
-    timer_thread = threading.Thread(
-        target=stp_sender.timer_thread)
+    timer_watcher_thread = threading.Thread(
+        target=stp_sender.timer_watcher_thread)
     ack_listener_thread.start()
-    timer_thread.start()
+    timer_watcher_thread.start()
 
     stp_sender.send_file(txt_file_to_send)
 
     stp_sender.send_fin()
 
     ack_listener_thread.join()
-    timer_thread.join()
+    timer_watcher_thread.join()
 
     stp_sender.sock.close()
 
