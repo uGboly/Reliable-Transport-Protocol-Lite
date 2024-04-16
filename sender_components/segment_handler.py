@@ -1,43 +1,41 @@
 import random
-from STPSegment import STPSegment
 import struct
-from sender_components.logger import log_event
 
 
-def send_segment(control_block, type, seqno, data=b'', is_retransmitted=False):
-    num_bytes = len(data) if type == 0 else 0
+def snd_seg(control_block, type, seqno, data=b'', old_seg=False):
+    len_data = len(data) if type == 0 else 0
 
     if random.random() < control_block.parameters['flp']:
         if type == 0:
-            control_block.data_segments_dropped += 1
-            if not is_retransmitted:
-                control_block.original_data_sent += num_bytes
-                control_block.original_segments_sent += 1
+            control_block.action_logger.data_segments_dropped += 1
+            if not old_seg:
+                control_block.action_logger.original_data_sent += len_data
+                control_block.action_logger.original_segments_sent += 1
 
-        log_event("drp", type,
-                  seqno, num_bytes, control_block)
+        control_block.action_logger.action_logging("drp", type,
+                  seqno, len_data)
     else:
         sent_data = struct.pack('!HH', type, seqno) + data
         control_block.sock.sendto(sent_data, control_block.dest)
-        log_event("snd", type,
-                  seqno, num_bytes, control_block)
+        control_block.action_logger.action_logging("snd", type,
+                  seqno, len_data)
 
         if type == 0:
-            if is_retransmitted:
-                control_block.retransmitted_segments += 1
+            if old_seg:
+                control_block.action_logger.retransmitted_segments += 1
             else:
-                control_block.original_data_sent += num_bytes
-                control_block.original_segments_sent += 1
+                control_block.action_logger.original_data_sent += len_data
+                control_block.action_logger.original_segments_sent += 1
 
 
-def receive_segment(control_block):
+def rcv_seg(control_block):
     response, _ = control_block.sock.recvfrom(1024)
     _, ack_seqno = struct.unpack('!HH', response)
 
     if random.random() < control_block.parameters['rlp']:
-        control_block.ack_segments_dropped += 1
-        log_event("drp", 1, ack_seqno, 0, control_block)
+        control_block.action_logger.ack_segments_dropped += 1
+        control_block.action_logger.action_logging("drp", 1, ack_seqno)
         return
     else:
-        log_event("rcv", 1, ack_seqno, 0, control_block)
+        control_block.action_logger.action_logging("rcv", 1, ack_seqno)
         return ack_seqno

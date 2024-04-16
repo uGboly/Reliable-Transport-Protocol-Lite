@@ -1,16 +1,47 @@
 import time
-from STPSegment import SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
 
 
-def log_event(action, segment_type, seqno, num_bytes, control_block):
-    current_time = time.time() * 1000
-    segment_type_str = {SEGMENT_TYPE_DATA: "DATA", SEGMENT_TYPE_ACK: "ACK",
-                        SEGMENT_TYPE_SYN: "SYN", SEGMENT_TYPE_FIN: "FIN"}.get(segment_type, "UNKNOWN")
-    if segment_type_str == "SYN":
-        control_block.start_time = current_time
-        time_offset = 0
-    else:
-        time_offset = current_time - control_block.start_time
-    with open("sender_log.txt", "a") as log_file:
-        log_file.write(
-            f"{action} {time_offset:.2f} {segment_type_str} {seqno} {num_bytes}\n")
+class ActionLogger:
+    def __init__(self):
+        self.started = False
+        self.time_base = None
+        self.original_data_sent = 0
+        self.original_data_acked = 0
+        self.original_segments_sent = 0
+        self.retransmitted_segments = 0
+        self.dup_acks_received = 0
+        self.data_segments_dropped = 0
+        self.ack_segments_dropped = 0
+        with open("sender_log.txt", "w"):
+            pass
+
+    def action_logging(self, action, type, seqno, len_data=0):
+        current_time = time.time() * 1000
+        type_name = {0: "DATA", 1: "ACK",
+                     2: "SYN", 3: "FIN"}.get(type, "UNKNOWN")
+        if not self.started:
+            self.time_base = current_time
+            self.started = current_time
+            time_stamp = 0
+        else:
+            time_stamp = current_time - self.time_base
+        with open("sender_log.txt", "a") as sender_log:
+            sender_log.write(
+                f"{action} {time_stamp:.2f} {type_name} {seqno} {len_data}\n")
+
+    def summary(self):
+        with open("sender_log.txt", "a") as sender_log:
+            sender_log.write(
+                f"Original data sent: {self.original_data_sent}\n")
+            sender_log.write(
+                f"Original data acked: {self.original_data_acked}\n")
+            sender_log.write(
+                f"Original segments sent: {self.original_segments_sent}\n")
+            sender_log.write(
+                f"Retransmitted segments: {self.retransmitted_segments}\n")
+            sender_log.write(
+                f"Dup acks received: {self.dup_acks_received}\n")
+            sender_log.write(
+                f"Data segments dropped: {self.data_segments_dropped}\n")
+            sender_log.write(
+                f"Ack segments dropped: {self.ack_segments_dropped}\n")
