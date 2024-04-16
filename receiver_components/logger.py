@@ -24,15 +24,15 @@ class ActionLogger:
             time_stamp = time_now - self.time_base
         with open("receiver_log.txt", "a") as receiver_log:
             receiver_log.write(
-                f"{action} {time_stamp:.2f} {type_name} {seqno} {len_data}\n")
+                f"{action}\t{time_stamp:.2f}\t{type_name}\t{seqno}\t{len_data}\n")
 
     def summary(self):
         with open("receiver_log.txt", "a") as receiver_log:
             receiver_log.write(
-                f"Original data received: {self.original_data_received}\n")
+                f"Original data received:     \t{self.original_data_received}\n")
             receiver_log.write(
-                f"Original segments received: {self.original_segments_received}\n")
+                f"Original segments received: \t{self.original_segments_received}\n")
             receiver_log.write(
-                f"Dup data segments received: {self.dup_data_segments_received}\n")
+                f"Dup data segments received: \t{self.dup_data_segments_received}\n")
             receiver_log.write(
-                f"Dup ack segments sent: {self.total_ack_segments_sent - self.original_segments_received - 2}\n")
+                f"Dup ack segments sent:      \t{self.total_ack_segments_sent - self.original_segments_received - 2}")

@@ -27,21 +27,21 @@ class ActionLogger:
             time_stamp = time_now - self.time_base
         with open("sender_log.txt", "a") as sender_log:
             sender_log.write(
-                f"{action} {time_stamp:.2f} {type_name} {seqno} {len_data}\n")
+                f"{action}\t{time_stamp:.2f}\t{type_name}\t{seqno}\t{len_data}\n")
 
     def summary(self):
         with open("sender_log.txt", "a") as sender_log:
             sender_log.write(
-                f"Original data sent: {self.original_data_sent}\n")
+                f"Original data sent:          \t{self.original_data_sent}\n")
             sender_log.write(
-                f"Original data acked: {self.original_data_acked}\n")
+                f"Original data acked:         \t{self.original_data_acked}\n")
             sender_log.write(
-                f"Original segments sent: {self.original_segments_sent}\n")
+                f"Original segments sent:      \t{self.original_segments_sent}\n")
             sender_log.write(
-                f"Retransmitted segments sent: {self.data_segments_dropped + self.ack_segments_dropped}\n")
+                f"Retransmitted segments sent: \t{self.data_segments_dropped + self.ack_segments_dropped}\n")
             sender_log.write(
-                f"Dup acks received: {self.dup_acks_received}\n")
+                f"Dup acks received:           \t{self.dup_acks_received}\n")
             sender_log.write(
-                f"Data segments dropped: {self.data_segments_dropped}\n")
+                f"Data segments dropped:       \t{self.data_segments_dropped}\n")
             sender_log.write(
-                f"Ack segments dropped: {self.ack_segments_dropped}\n")
+                f"Ack segments dropped:        \t{self.ack_segments_dropped}\n")
