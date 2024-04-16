@@ -5,11 +5,16 @@ import time
 import threading
 from sender_components.segment_handler import snd_seg, rcv_seg
 from sender_components.logger import ActionLogger
+from utils import calc_new_seqno
+
+CLOSE = 0
+ESTABLISHED = 1
+FIN_WAIT = 2
 
 
 class STPSender:
     def __init__(self):
-        self.state = "CLOSE"
+        self.state = CLOSE
         self.syn_seqno = random.randint(0, 65535)
         self.seqno = self.syn_seqno + 1
         self.lock = threading.Lock()
@@ -20,39 +25,35 @@ class STPSender:
         self.dest = ('localhost', receiver_port)
         self.action_logger = ActionLogger()
         self.buffered_seg = []
-        self.last_sent_time = None
+        self.stp_timer = None
         self.ack_cnt = {}
-
 
     def establish_connection(self):
         snd_seg(self, 2, self.syn_seqno)
-
         while True:
             try:
                 ack_seqno = rcv_seg(self)
 
                 if ack_seqno == self.syn_seqno + 1:
-                    self.state = "ESTABLISHED"
+                    self.state = ESTABLISHED
                     break
             except socket.timeout:
                 snd_seg(self, 2, self.syn_seqno)
 
-
     def ack_receiver(self):
         while True:
-
             try:
                 ack_seqno = rcv_seg(self)
 
                 with self.lock:
-                    if self.state == "FIN_WAIT" and ack_seqno == self.seqno + 1:
-                        self.state = "CLOSE"
+                    if self.state == FIN_WAIT and ack_seqno == self.seqno + 1:
+                        self.state = CLOSE
                         break
 
-                    elif ack_seqno in [(seg[0] + len(seg[1])) % 2 ** 16 for seg in self.buffered_seg]:
+                    elif ack_seqno in [calc_new_seqno(old_seqno, data) % 2 ** 16 for old_seqno, data in self.buffered_seg]:
 
-                        index_ack_seg = [i for i, seg in enumerate(
-                            self.buffered_seg) if (seg[0] + len(seg[1])) % 2 ** 16 == ack_seqno][0]
+                        index_ack_seg = [i for i, [old_seqno, data] in enumerate(
+                            self.buffered_seg) if calc_new_seqno(old_seqno, data) % 2 ** 16 == ack_seqno][0]
                         for seg in self.buffered_seg[:index_ack_seg + 1]:
                             self.action_logger.original_data_acked += len(
                                 seg[1])
@@ -60,9 +61,10 @@ class STPSender:
                         self.buffered_seg = self.buffered_seg[index_ack_seg + 1:]
 
                         if self.buffered_seg:
-                            self.last_sent_time = time.time() * 1000 + self.parameters['rto']
+                            self.stp_timer = time.time() * 1000 + \
+                                self.parameters['rto']
                         else:
-                            self.last_sent_time = None
+                            self.stp_timer = None
 
                         self.ack_cnt = {}
 
@@ -75,40 +77,39 @@ class STPSender:
                             self.ack_cnt[ack_seqno] = 1
 
                         if self.ack_cnt[ack_seqno] == 3:
-                            oldest_unack_segment = self.buffered_seg[0]
+                            first_buffered_seg = self.buffered_seg[0]
                             snd_seg(
-                                self, 0, oldest_unack_segment[0], oldest_unack_segment[1], True)
+                                self, 0, first_buffered_seg[0], first_buffered_seg[1], True)
 
-                            self.last_sent_time = time.time() * 1000 + self.parameters['rto']
+                            self.stp_timer = time.time() * 1000 + \
+                                self.parameters['rto']
 
             except socket.timeout:
                 continue
 
-
     def timer_thread(self):
         while True:
             with self.lock:
-                if self.state == "CLOSE":
-
+                if self.state == CLOSE:
                     break
-                if self.last_sent_time is not None:
+                if self.stp_timer is not None:
                     current_time = time.time() * 1000
-                    if current_time >= self.last_sent_time:
+                    if current_time >= self.stp_timer:
 
                         if self.buffered_seg:
-                            oldest_unack_segment = self.buffered_seg[0]
+                            first_buffered_seg = self.buffered_seg[0]
                             snd_seg(
-                                self, 0, oldest_unack_segment[0], oldest_unack_segment[1], True)
+                                self, 0, first_buffered_seg[0], first_buffered_seg[1], True)
 
-                            self.last_sent_time = current_time + self.parameters['rto']
-
+                            self.stp_timer = current_time + \
+                                self.parameters['rto']
                             self.ack_cnt = {}
-                        elif self.state == "FIN_WAIT":
 
+                        elif self.state == FIN_WAIT:
                             snd_seg(self, 3,
                                     self.seqno, b'', True)
-                            self.last_sent_time = current_time + self.parameters['rto']
-
+                            self.stp_timer = current_time + \
+                                self.parameters['rto']
 
     def send_file(self, filename):
         with open(filename, 'rb') as file:
@@ -124,14 +125,15 @@ class STPSender:
                     if window_space > 0 and sent_length < total_length:
 
                         segment_size = min(1000, total_length -
-                                        sent_length, window_space)
+                                           sent_length, window_space)
                         segment_data = file_data[sent_length:sent_length+segment_size]
 
                         snd_seg(self, 0,
                                 self.seqno, segment_data)
 
                         if not self.buffered_seg:
-                            self.last_sent_time = time.time() * 1000 + self.parameters['rto']
+                            self.stp_timer = time.time() * 1000 + \
+                                self.parameters['rto']
                         self.buffered_seg.append(
                             [self.seqno, segment_data])
                         self.seqno = (
@@ -139,16 +141,16 @@ class STPSender:
 
                         sent_length += segment_size
 
-
-    def close_connection(self):
+    def send_fin(self):
         while True:
             with self.lock:
-                if not self.buffered_seg:
-
-                    self.state = "FIN_WAIT"
-
+                if self.buffered_seg:
+                    continue
+                else:
+                    self.state = FIN_WAIT
                     snd_seg(self, 3, self.seqno)
-                    self.last_sent_time = time.time() * 1000 + self.parameters['rto']
+                    self.stp_timer = time.time() * 1000 + \
+                        self.parameters['rto']
                     break
 
 
@@ -171,7 +173,6 @@ if __name__ == '__main__':
 
     stp_sender.establish_connection()
 
-
     ack_thread = threading.Thread(
         target=stp_sender.ack_receiver)
     timer_thread = threading.Thread(
@@ -181,7 +182,7 @@ if __name__ == '__main__':
 
     stp_sender.send_file(txt_file_to_send)
 
-    stp_sender.close_connection()
+    stp_sender.send_fin()
 
     ack_thread.join()
     timer_thread.join()
