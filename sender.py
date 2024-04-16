@@ -4,8 +4,7 @@ import sys
 import time
 import threading
 from STPSegment import STPSegment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK, SEGMENT_TYPE_SYN, SEGMENT_TYPE_FIN
-
-MSS = 1000
+from sender_components.segment_handler import send_segment, receive_segment
 
 
 class STPControlBlock:
@@ -13,10 +12,10 @@ class STPControlBlock:
         self.state = "CLOSED"
         self.isn = random.randint(0, 65535)
         self.seqno = self.isn + 1
-        self.ackno = 0
         self.lock = threading.Lock()
         self.window_size = max_win
         self.rto = rto
+        self.parameters = dict(rto=rto, flp=flp, rlp=rlp)
         self.unack_segments = []
         self.timer = None
         self.dup_ack_count = {}
@@ -31,59 +30,6 @@ class STPControlBlock:
         self.ack_segments_dropped = 0
 
 
-def log_event(action, segment_type, seqno, num_bytes, control_block):
-    current_time = time.time() * 1000
-    segment_type_str = {SEGMENT_TYPE_DATA: "DATA", SEGMENT_TYPE_ACK: "ACK",
-                        SEGMENT_TYPE_SYN: "SYN", SEGMENT_TYPE_FIN: "FIN"}.get(segment_type, "UNKNOWN")
-    if segment_type_str == "SYN":
-        control_block.start_time = current_time
-        time_offset = 0
-    else:
-        time_offset = current_time - control_block.start_time
-    with open("sender_log.txt", "a") as log_file:
-        log_file.write(
-            f"{action} {time_offset:.2f} {segment_type_str} {seqno} {num_bytes}\n")
-
-
-def send_segment(socket, address, segment, control_block, is_retransmitted=False):
-    num_bytes = len(
-        segment.data) if segment.segment_type == SEGMENT_TYPE_DATA else 0
-
-    if random.random() < flp:
-        if segment.segment_type == SEGMENT_TYPE_DATA:
-            control_block.data_segments_dropped += 1
-            if not is_retransmitted:
-                control_block.original_data_sent += num_bytes
-                control_block.original_segments_sent += 1
-
-        log_event("drp", segment.segment_type,
-                  segment.seqno, num_bytes, control_block)
-    else:
-        socket.sendto(segment.pack(), address)
-        log_event("snd", segment.segment_type,
-                  segment.seqno, num_bytes, control_block)
-
-        if segment.segment_type == SEGMENT_TYPE_DATA:
-            if is_retransmitted:
-                control_block.retransmitted_segments += 1
-            else:
-                control_block.original_data_sent += num_bytes
-                control_block.original_segments_sent += 1
-
-
-def receive_segment(socket, control_block):
-    response, _ = socket.recvfrom(1024)
-    segment = STPSegment.unpack(response)
-
-    if random.random() < rlp:
-        control_block.ack_segments_dropped += 1
-        log_event("drp", segment.segment_type, segment.seqno, 0, control_block)
-        return
-    else:
-        log_event("rcv", segment.segment_type, segment.seqno, 0, control_block)
-        return segment
-
-
 def establish_connection(sender_socket, receiver_address, control_block):
 
     syn_segment = STPSegment(SEGMENT_TYPE_SYN, control_block.isn)
@@ -96,7 +42,6 @@ def establish_connection(sender_socket, receiver_address, control_block):
             ack_segment = receive_segment(sender_socket, control_block)
 
             if ack_segment.segment_type == SEGMENT_TYPE_ACK and ack_segment.seqno == control_block.isn + 1:
-                control_block.ackno = ack_segment.seqno
                 control_block.state = "ESTABLISHED"
                 break
         except socket.timeout:
@@ -192,11 +137,11 @@ def send_file(filename, control_block, sender_socket):
         while sent_length < total_length or control_block.unack_segments:
             with control_block.lock:
                 window_space = control_block.window_size - \
-                    (len(control_block.unack_segments) * MSS)
+                    (len(control_block.unack_segments) * 1000)
 
                 if window_space > 0 and sent_length < total_length:
 
-                    segment_size = min(MSS, total_length -
+                    segment_size = min(1000, total_length -
                                        sent_length, window_space)
                     segment_data = file_data[sent_length:sent_length+segment_size]
                     new_segment = STPSegment(
@@ -258,15 +203,14 @@ if __name__ == '__main__':
     flp = float(sys.argv[6])
     rlp = float(sys.argv[7])
 
-    with open("sender_log.txt", "w") as log_file:
-        log_file.write("")
+    with open("sender_log.txt", "w"):
+        pass
 
     random.seed()
 
     control_block = STPControlBlock()
     sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender_socket.bind(('', sender_port))
-    sender_address = ('localhost', receiver_port)
     receiver_address = ('localhost', receiver_port)
 
     establish_connection(sender_socket, receiver_address, control_block)
