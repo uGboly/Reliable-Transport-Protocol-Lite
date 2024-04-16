@@ -16,15 +16,15 @@ class ActionLogger:
             pass
 
     def action_logging(self, action, type, seqno, len_data=0):
-        current_time = time.time() * 1000
+        time_now = time.time() * 1000
         type_name = {0: "DATA", 1: "ACK",
                      2: "SYN", 3: "FIN"}.get(type, "UNKNOWN")
         if not self.started:
-            self.time_base = current_time
-            self.started = current_time
+            self.time_base = time_now
+            self.started = True
             time_stamp = 0
         else:
-            time_stamp = current_time - self.time_base
+            time_stamp = time_now - self.time_base
         with open("sender_log.txt", "a") as sender_log:
             sender_log.write(
                 f"{action} {time_stamp:.2f} {type_name} {seqno} {len_data}\n")
@@ -38,7 +38,7 @@ class ActionLogger:
             sender_log.write(
                 f"Original segments sent: {self.original_segments_sent}\n")
             sender_log.write(
-                f"Retransmitted segments: {self.retransmitted_segments}\n")
+                f"Retransmitted segments sent: {self.data_segments_dropped + self.ack_segments_dropped}\n")
             sender_log.write(
                 f"Dup acks received: {self.dup_acks_received}\n")
             sender_log.write(
